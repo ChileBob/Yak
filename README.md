@@ -3,8 +3,9 @@
 ![Go on, call me Fluffy one more time!](https://github.com/ChileBob/Yak/blob/main/images/yak-600x473.png?raw=true)
 
 - Ycash/Zcash clients connect to their full nodes via ZMQ & listen for raw transactions.
-- Raw shielded transactions that can be decrypted using viewkeys are sent for broadcast.
+- Raw shielded transactions decrypted with viewkeys are broadcast after being AES256 encrypted with the viewkey.
 - Transactions are considered confirmed when they are mined in a new block.
+- Adding a viewkey is done by sending it in an encrypted memo.
 
 This is a proof of concept and possibly a REALLY BAD IDEA - use with caution.
 

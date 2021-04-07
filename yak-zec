@@ -161,9 +161,9 @@ $client->connect;							# connect to websocket server
 
 $client->write("BASE64:$client_ident");					# subscribe for BASE64 transport & send our random session/client ID
 
-my $info  = node_cli('getblockchaininfo');				# current chain info
-									# TODO: Abort if the node is not responding
-my $block = node_cli('getblock', $info->{'bestblockhash'});		# last block
+my $info  = node_cli('getblockchaininfo', '', 'abort');			# current chain info, abort if node is down
+
+my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');	# last block, abort if node is down
 
 									# load viewkeys from memos received by registration address
 									
@@ -204,7 +204,7 @@ while ($running) {
 
 	if ($zmq_parts[0] eq 'rawtx') {					# raw transaction	
 			
-		my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]));	# node client decodes raw transaction
+		my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');	# node client decodes raw transaction, dont abort on failure
 
 		my @vout            = @{$txn->{'vout'}};					# transparent outputs
 		my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};				# shielded outputs
@@ -272,7 +272,7 @@ while ($running) {
 
 	elsif ($zmq_parts[0] eq 'hashblock') {				# new block, confirm mined txn
 
-		$block = node_cli('getblock', unpack("H*", $zmq_parts[1]));		# update block
+		$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');	# update block, abort on failure
 
 		my $packet = pack("H*",'0100');				# websocket packet, type 0x01, version 0x00
 		$packet .= pack("L", scalar @{$block->{'tx'}});		# 32-bit, count of txids
@@ -338,12 +338,18 @@ sub node_cli {
 
 	use JSON;
 
-	my ($command, $data) = @_;
+	my ($command, $data, $failure) = @_;
 
 	my $response = `$config->{'node_client'} $command $data 2>/dev/null`;		# every time you use backticks a puppy dies :-(
 
 	if (eval { decode_json($response) } ) {						# invalid kills puppys too
 		return(decode_json($response));
+	}
+	else {										# bad response
+		if ($failure eq 'abort') {						# 'abort' flag means we shutdown now
+			print("Node is down, aborting");
+			$running = 0;
+		}
 	}
 }
 
