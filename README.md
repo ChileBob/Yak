@@ -1,12 +1,12 @@
-# Yak : Ycash/Zcash payment detector &amp; messaging.
+# Yak : Ycash/Zcash Payment Detector
 
 ![Go on, call me Fluffy one more time!](https://github.com/ChileBob/Yak/blob/main/images/yak-600x473.png?raw=true)
 
-The client listens to ZMQ for raw transactions & broadcasts via a websocket echo server, it listens for new blocks & broadcasts confirmations for mined transactions.
+- Ycash/Zcash clients connect to their full nodes via ZMQ & listen for raw transactions.
+- Raw shielded transactions that can be decrypted using viewkeys are sent for broadcast.
+- Transactions are considered confirmed when they are mined in a new block.
 
-Any device can connect to the websocket server and receive BINARY, BASE64 or HEX data.
-
-This is a proof of concept and probably a REALLY BAD IDEA - use with caution.
+This is a proof of concept and possibly a REALLY BAD IDEA - use with caution.
 
 # Current Status
 
@@ -14,6 +14,7 @@ Important, please note :-
 - No authentication.
 - No encryption.
 - ZMQ HAS SECURITY IMPLICATIONS - MAKE SURE YOU UNDERSTAND THEM !!!
+- Any device can connect to the websocket server and receive BINARY, BASE64 or HEX data.
 
 To enable ZMQ on your ZCASH node, add this to zcash.conf :-  
 - zmqpubrawtx=tcp://127.0.0.1:28232
@@ -27,16 +28,17 @@ yak-web :-
 - This is the websocket server, run it from a terminal.
 - It broadcasts everything it receives from yec-yak & zec-yak to all connected clients.
 
-yec-yak :-
-- Run this on your fullnode AS THE SAME USER that runs ycashd, run it from a terminal.
-- Make sure the node client (zcash-cli/ycash-cli) is in the $PATH.
-- It listens to rawtransactions & new blocks from ZMQ, decodes those it can with viewkeys & sends updates to ystream-server.
-
 zec-yak :-
-- The Zcash version of yec-yak.
+- Zcash fullnode (zcashd) connector/client.
+- Run it from a terminal AS THE SAME USER that runs zcashd.
+- Make sure the node client (zcash-cli) is in the $PATH.
+- Any transactions it receives and can decrypt are broadcast via yak-web.
+
+yec-yak :-
+- Waiting on the ycash version of librustzcash
 
 yak-yak :-
-- Not yet written, this is a command line websocket client for debugging & testing.
+- Not yet written, its a command line client for debugging & testing.
 
 Known issues :-
-- The client does not attempt reconnection if the server is restarted.
+- The clients do not attempt reconnection if the server is restarted.
