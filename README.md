@@ -3,9 +3,9 @@
 ![Go on, call me Fluffy one more time!](https://github.com/ChileBob/Yak/blob/main/images/yak-600x473.png?raw=true)
 
 - Ycash/Zcash clients connect to their full nodes via ZMQ & listen for raw transactions.
-- Raw shielded transactions decrypted with viewkeys are broadcast after being AES256 encrypted with the viewkey.
-- Transactions are considered confirmed when they are mined in a new block.
-- Adding a viewkey is done by sending it in an encrypted memo.
+- Decrypted shielded outputs are broadcast after being AES256 encrypted.
+- Transactions are confirmed when they are mined in a new block.
+- Adding a viewkey is done by sending it via encrypted memo.
 
 This is a proof of concept and possibly a REALLY BAD IDEA - use with caution.
 
@@ -33,7 +33,7 @@ zec-yak :-
 - Zcash fullnode (zcashd) connector/client.
 - Run it from a terminal AS THE SAME USER that runs zcashd.
 - Make sure the node client (zcash-cli) is in the $PATH.
-- Any transactions it receives and can decrypt are broadcast via yak-web.
+- Decrypted transactions are encrypted using the viewkey and broadcast via yak-web.
 
 yec-yak :-
 - Waiting on the ycash version of librustzcash
