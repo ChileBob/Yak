@@ -1,5 +1,4 @@
-# Yak
-Ycash/Zcash payment detector &amp; messaging.
+# Yak : Ycash/Zcash payment detector &amp; messaging.
 
 ![Go on, call me Fluffy one more time!](https://github.com/ChileBob/Yak/blob/main/images/yak-600x473.png?raw=true)
 
