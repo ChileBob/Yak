@@ -1,7 +1,7 @@
 # Yak
 Ycash/Zcash payment detector &amp; messaging.
 
-![alt text](https://github.com/ChileBob/yak/blob/[branch]/image.jpg?raw=true)
+![Go on, call me Fluffy one more time!](https://github.com/ChileBob/Yak/blob/main/images/yak-600x473.png?raw=true)
 
 The client listens to ZMQ for raw transactions & broadcasts via a websocket echo server, it listens for new blocks & broadcasts confirmations for mined transactions.
 
