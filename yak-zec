@@ -9,6 +9,16 @@
 
 # TODO: Move websocket server URI to default settings
 # TODO: Process command line args to overwrite default settings
+# TODO: Confirm zaddr derived from FVK has been imported to the node
+# TODO: Load viewkeys from zaddr on startup
+# TODO: Listen for new viewkeys to monitor while running (which will need viewkey!)
+# TODO: Try all keys on all shielded transactions
+# TODO: Add option to listen for transparent transactions (default should be to ignore them)
+# TODO: Use the viewkey as an encryption key & AES256 encrypt shielded outputs BEFORE sending
+# DONE: Ignore transparent outputs by default
+
+# ISSUE: Would be nice to ONLY support IVKs, a payment detector does not need to know about outgoing transactions.
+# ISSUE: The payment address cannot be derived from an IVK
 
 #########################################################################################################################################################################
 #
@@ -24,9 +34,9 @@
 # 	<version>	u8										('0x01' : version)
 # 	<txid>		32-bytes									(txid)
 # 	<taddr count>	uint32										(number of transparent outputs)
-# 	<taddr data>	<taddr_count> * (<amount u64> + <address 35-bytes>)				(transparent output data)
+# 	<taddr data>	<taddr_count> * (<amount 8-bytes> + <address 35-bytes>)				(transparent output data)
 # 	<zaddr count>	uint32										(number of shielded outputs)
-#	<zaddr data>	<zaddr_count> * (<amount u64> + <address 78-bytes> + <memo 512-bytes>)		(decoded shielded output data)
+#	<zaddr data>	<zaddr_count> * (<amount 8-bytes> + <memo 512-bytes>)				(decoded shielded output data)
 #
 #	<type>		u8										('0x01' : type, txn confirmation)
 #	<version>	u8										('0x00' : version)
@@ -35,31 +45,43 @@
 #
 #########################################################################################################################################################################
 
-use ZMQ::FFI qw(ZMQ_SUB);			# ZMQ connection to fullnode
-use Time::HiRes q(usleep);			# ZMQ polling interval timer
-use Data::Dumper;				# debugging output
-use Math::BigInt;				# at some point we need to handle 256-bit ints
-use IO::Socket::INET;				# general purpose networking
-use Protocol::WebSocket::Client;		# websocket client
-use Convert::Base64;				# transport encoding for perl clients
-use Convert::Binary::C;				# the Rust things are designed to work with C so Perl needs this
+use ZMQ::FFI qw(ZMQ_SUB);				# ZMQ connection to fullnode
+use Time::HiRes q(usleep);				# ZMQ polling interval timer
+use Data::Dumper;					# debugging output
+use Math::BigInt;					# at some point we need to handle 256-bit ints
+use IO::Socket::INET;					# general purpose networking
+use Protocol::WebSocket::Client;			# websocket client
+use Convert::Base64;					# transport encoding for perl clients
+use Convert::Binary::C;					# the Rust things are designed to work with C so Perl needs this
+use String::HexConvert ':all';				# convert hex-encoded strings to ascii
 
-use FFI::Platypus;				# FFI interface to librustzcash
-use FFI::Platypus::Buffer qw( scalar_to_buffer);	# FFI
-use FFI::Platypus::Memory qw( malloc memcpy free);	# FFI
+use Crypt::CBC;						# encryption mode
+use Crypt::Cipher::AES;					# AES256 encryption algo
+use Digest::SHA qw(sha256);				# sha hashing strings to create keys
 
-my $config = { 					# DEFAULT CONFIG
-	node_client => 'zcash-cli',		# fullnode client binary
-	zmq => 'tcp://127.0.0.1:28232',		# fullnode zmq
-	web_type => 'ws',			# websocket server
-	web_addr => '127.0.0.1',		#
-	web_port => 8834,			#
-	librust => '/home/bob/github/zcash/target/debug/librustzcash.so',		# path to librustzcash.so (dynamic library)
-	xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn'
+use FFI::Platypus;					# FFI interface to librustzcash
+use FFI::Platypus::Buffer qw( scalar_to_buffer);	# 
+use FFI::Platypus::Memory qw( malloc memcpy free);	# 
+
+require './bech32.pm';					# bech32 encode/decode 
+
+my $debug = 1;						# debug mode, 0 = quiet
+
+my $config = { 						# DEFAULT CONFIGURATION
+
+	node_client => 'zcash-cli',			# fullnode client binary
+	zmq => 'tcp://127.0.0.1:28232',			# fullnode zmq
+	web_type => 'ws',				# websocket server
+	web_addr => '127.0.0.1',			#
+	web_port => 8834,				#
+	librust => '/home/bob/github/zcash/target/debug/librustzcash.so',		# path to librustzcash.so (dynamic library built from librustzcash)
+	xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn',
+	taddr => 1					# ignore transparent txns by default
 };
 
 #TODO: process command line to over-ride default config
 #TODO: show help, command line args & exit
+
 
 #########################################################################################################################################################################
 #
@@ -67,43 +89,54 @@ my $config = { 					# DEFAULT CONFIG
 #
 #########################################################################################################################################################################
 
+my $running = 1;						# running flag
+
 my $ffi = FFI::Platypus->new( api => 1);												# FFI to librustzcash
-$ffi->lib( $config->{'librust'} );													# load dynamic library 
+$ffi->lib( $config->{'librust'} );													# load library
+
 $ffi->attach( 'librustzcash_xfvk_decrypt_note' => [ 'int', 'string', 'string', 'string', 'string', 'opaque', 'opaque' ] => 'int');	# decrypt note with ExtendedFullViewingKey 
+$ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque', 'opaque'  ] => 'int'); 				# derive payment address from ExtendedFullViewingKey
+$ffi->attach( 'librustzcash_crh_ivk' => [ 'string', 'string', 'opaque' ] => 'void'); 							# derive ivk from ak & nk
 
+my @viewkey;							# array of ExtendedFullViewingKeys we monitor
 
-my $client_ident = keyRandom(32,'A');		# generate random client id for this client
-debug("ID : $client_ident");			# show connection detail
-debug("ZMQ: $config->{'zmq'}");
-
-my $ctx = ZMQ::FFI->new();			# ZMQ connection
-my $zmq_socket = $ctx->socket(ZMQ_SUB);		#
-my $running = 1;				# running flag
-
-$zmq_socket->connect($config->{'zmq'});		# connect to ZMQ
-$zmq_socket->subscribe('');			# subscribe to all events
-
-my $tcp_socket = IO::Socket::INET->new(		# connect to websocket server (blocking)
-	PeerAddr => $config->{'web_addr'},
-	PeerPort => $config->{'web_port'},
-	Proto => 'tcp',
-	Blocking => 1
-);
-
-if (!$tcp_socket) {											# confirm connection
-	debug ("WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
+if (xfvk_check($config->{'xfvk'})) {				# check our registration key is valid
+	push(@viewkey, $config->{'xfvk'});
+	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});	# derive address from xfvk
+	debug("REG: $config->{'addr'}");
 }
 
-my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");	# start websocket client
+my $client_ident = keyRandom(32,'A');				# generate random client id for this client
+debug("ID : $client_ident");				
 
-$client->on(					# connect method
+debug("ZMQ: $config->{'zmq'}");
+my $ctx = ZMQ::FFI->new();					# ZMQ connection
+
+my $zmq_socket = $ctx->socket(ZMQ_SUB);				# ZMQ socket
+$zmq_socket->connect($config->{'zmq'});				# 
+$zmq_socket->subscribe('');					# 
+
+my $tcp_socket = IO::Socket::INET->new(				# connect to websocket server (blocking)
+	PeerAddr => $config->{'web_addr'},			#
+	PeerPort => $config->{'web_port'},			#
+	Proto => 'tcp',						#
+	Blocking => 1						# can be blocking, all we do is send
+);
+
+if (!$tcp_socket) {						# confirm connection
+	debug ("WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
+}
+								# start websocket client
+my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");
+
+$client->on(							# websocket connect method
 	connect => sub {
 		my $client = shift;
 	}
 );
 
 $client->on(
-	write => sub {				# write method
+	write => sub {						# websocket write method
 		my $client = shift;
 		my ($buf) = @_;
 		syswrite $tcp_socket, $buf;
@@ -111,14 +144,14 @@ $client->on(
 	}
 );
 
-$client->on(					# read method
+$client->on(							# websocket read method
 	read => sub {
 		my $client = shift;
 		my ($buf) = @_;
 
 		debug("RX: $buf");
 
-		if ($buf =~ m/^HELLO/) {				# receive server welcome message
+		if ($buf =~ m/^HELLO/) {			# receive server welcome message
 			debug("connected to websocket server");
 		}
 	}
@@ -126,13 +159,27 @@ $client->on(					# read method
 
 $client->connect;							# connect to websocket server
 
-$client->write("BASE64:$client_ident");					# subscribe for BASE64 transport, plus our client ID
-
-
-#while ($tcp_socket->connected) {					# loop until we're done
+$client->write("BASE64:$client_ident");					# subscribe for BASE64 transport & send our random session/client ID
 
 my $info  = node_cli('getblockchaininfo');				# current chain info
+									# TODO: Abort if the node is not responding
 my $block = node_cli('getblock', $info->{'bestblockhash'});		# last block
+
+									# load viewkeys from memos received by registration address
+									
+foreach my $txn (@{node_cli("z_listreceivedbyaddress $config->{'addr'}")}) {	# check registration address for viewkeys to load
+
+	my @line = split("\n", hex_to_ascii($txn->{'memo'})); 			# convert to ascii & split it lines
+	foreach $line (@line) {		
+		if (xfvk_check($line)) {					# add if valid
+			push(@viewkey, $line);					# TODO: Prob want to check min value before adding, unless its free :-)
+			print "Monitoring : $line\n";
+		}
+	}
+}
+
+debug("Monitoring " . scalar @viewkey . " viewkeys\n");			# ready
+
 
 while ($running) {
 	if ($tcp_socket) {						# listen to websocket server (if connected)
@@ -164,22 +211,59 @@ while ($running) {
 
 		my $packet = pack("H*", '0000');			# websocket packet, type 0x00, version 0x00
 		$packet .= $zmq_parts[1];				# 32-bytes, txid received from ZMQ
-		$packet .= pack("L", scalar @vout);			# 32-bit, count of transparent outputs
 
-		foreach $op (@vout) {
-			debug("$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
-			$packet .= pack("H*", sprintf("%016s", substr(Math::BigInt->new($op->{'valueZat'})->as_hex(), 2)));	# 8-bytes, valueZat
-			$packet .= pack("A35", $op->{'valueZat'});								# 35-bytes, address
+		if ($config->{'taddr'} > 0) {				# default is to ignore transparent outputs
+			$packet .= pack("L", scalar @vout);		# 32-bit, count of transparent outputs
+			foreach $op (@vout) {
+				debug("$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+				$packet .= pack("H*", sprintf("%016s", substr(Math::BigInt->new($op->{'valueZat'})->as_hex(), 2)));	# 8-bytes, valueZat
+				$packet .= pack("A35", $op->{'valueZat'});								# 35-bytes, address
+			}
 		}
+		else {							# ignore transparent outputs
+			$packet .= pack("L", 0);
+		}
+
+		my $shielded_count = 0;
+		my $shielded_data = '';
 
 		foreach my $vout (@{$txn->{'vShieldedOutput'}}) {
 
-			my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
+			foreach my $xfvk (@viewkeys) {			# try all our viewkeys
 
-			if ($result->{'status'} == 1) {
-				debug("$zaddr : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
+									# attempt decryption
+				my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
+
+				if ($result->{'status'} == 1) {
+
+					if ($xfvk eq $viewkey[0]) {	# is this our registration viewkey ?
+				
+						my @line = split("\n", unpack("A*", $result->{'memo'}));		# could be multiline
+						foreach $line (@line) {							# check each line
+							if (xfvk_check($line)) {					# is it a valid ExtendedFullViewingKey ?
+								push(@viewkey, $line);					# TODO: Prob want to check min value before adding, unless its free :-)
+								debug ("Monitoring : $line");
+							}
+						}
+					}
+					else {				# not our registration viewkey
+
+						debug("SHIELDED TRANSACTION : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
+
+						$shielded_count++;							# TODO: Increase count of shielded transactions	
+
+						my $shielded_out .= $result->{'value'};	# 8-bytes, value in zats	# TODO: Add shielded data
+					        $shielded_out    .= $result->{'memo'};	# 512 bytes, null padded memo
+
+															# TODO: Encrypt AES256 with xfvk as the excryption key
+						$shielded_data .= $shielded_out;					# TODO: Append ciphertext 
+					}
+				}
 			}
 		}
+		$packet .= pack("L", $shielded_count);			# TODO: 32-bit, count of decoded shielded outputs
+		$packet .= $shielded_data; 				# TODO: Append shielded output ciphertext
+
 
 		if ($tcp_socket) {					# send to websocket server (if connected)
 			$client->write(encode_base64($packet));		
@@ -216,8 +300,11 @@ exit;
 sub debug {
 	
 	# TODO : Send to logfile ? Maybe not (privacy!)
-	print "$_[0]\n";
+	if ($debug) {
+		print "$_[0]\n";
+	}
 }
+
 
 #######################################################################################################################################
 #
@@ -261,7 +348,6 @@ sub node_cli {
 }
 
 
-
 #############################################################################################################################################################################
 #
 # LIBRUSTZCASH : subs that summon librustzcash functions
@@ -295,6 +381,9 @@ sub xfvk_to_ivk {
 	return(unpack("H*", $ivk_ret));							# return ivk as hex string
 }
 
+
+#######################################################################################################################################
+#
 # Derive payment address from extended full viewkey 
 #
 sub xfvk_to_addr {
@@ -323,6 +412,8 @@ sub xfvk_to_addr {
 }
 
 
+#######################################################################################################################################
+#
 # Attempt to decode a sapling transaction 
 #
 sub decrypt_note {
@@ -354,6 +445,8 @@ sub decrypt_note {
 }
 
 
+#######################################################################################################################################
+#
 # Check Extended Full Viewing Key
 #
 sub xfvk_check {
@@ -361,14 +454,89 @@ sub xfvk_check {
 	my ($xfvk_str) = @_;	# bech32 encoded extended full viewkey
 
 	if (length($xfvk_str) != 285) {			
-		debug("xfvk_to_addr() : full viewkey was not the correct length, expected 285 chars");
+#		debug("xfvk_to_addr() : full viewkey was not the correct length, expected 285 chars, received \'$xfvk_str\'");
 		return(0);
 	}
 	elsif (index($xfvk_str, 'zxviews') != 0) {
-		debug("xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\'");
+#		debug("xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\', received \'$xfvk_str\'");
 		return(0);
 	}
 	return(1);		# viewing key is valid
+}
+
+
+#######################################################################################################################################
+#
+# generate key from a string, input can be a raw ascii string OR hex chars
+#
+sub keyGen {
+
+	if ($_[0] =~ m/[^0-9a-fA-F]/) {					# string contains non-hex, hash char byte values
+		return(sha256(pack("A*", $_[0])));
+	}
+	else {								# string is hex-encoded, hash byte values
+		return(sha256(pack("H*", $_[0])));
+	}
+}
+
+
+#######################################################################################################################################
+#
+# decrypt message
+#
+sub decryptAES {
+
+	# TODO: Authenticate ciphertext
+	
+	my ($key, $input) = @_;
+
+	my $inputHEX = unpack("H*", $input);					# convert binary scalar input to hex-encoded string
+
+	$ivHEX  = substr($inputHEX, 0, 32);					# init vector is first 16 bytes, 32 hex chars
+
+	if (length($inputHEX) >= 64) {						# make sure we have more than minimum data, avoids dying horribly
+
+		$cipherHEX = substr($inputHEX, 32, (length($inputHEX) - 32));	# ciphertext, as hex string
+
+		my $cipher = Crypt::CBC->new({ 					# setup encyption
+			'key' => $key,
+			'cipher' => 'OpenSSL::AES',
+			'blocksize' => 16,
+			'header' => 'none',
+			'iv' => pack("H*", $ivHEX),
+			'literal_key' => 1,					
+			'padding' => 'standard'
+		});
+
+		return($cipher->decrypt(pack("H*", $cipherHEX)));		# result is a binary scalar
+	}
+}
+
+
+#######################################################################################################################################
+#
+# encrypt message								returns binary ciphertext, enrypts binary plaintext
+#
+sub encryptAES {
+
+	# TODO: Authenticate ciphertext
+	
+	my ($key, $plaintext) = @_;						# key is a binary scalar, plaintext is a string
+
+	$iv  = pack("H*", keyRandom(32));					# generate random init vector (32 hex chars, packs to 128-bit)
+
+	my $cipher = Crypt::CBC->new({ 						# setup encyption
+		'key' => $key,
+		'cipher' => 'OpenSSL::AES',
+		'blocksize' => 16,
+		'header' => 'none',
+		'iv' => $iv,
+		'literal_key' => 1,				
+		'padding' => 'standard'
+	});
+	my $ciphertext = $cipher->encrypt($plaintext);	
+
+	return($iv . $ciphertext);						# return binary scalar
 }
 
 
