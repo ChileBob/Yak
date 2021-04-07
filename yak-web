@@ -1,0 +1,136 @@
+#!/usr/bin/perl
+
+# yak-web
+#
+# Websocket echo server for use with yec-yak, zec-yak, yak-yak and other yak clients.
+#
+# MIT License (ChileBob)
+#
+# Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
+# Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
+
+my $server_port = 8834;					# websocket port number 
+
+###################################################################################################################################################
+#
+# CHANGING STUFF BELOW THIS LINE IS A BAD IDEA
+#
+###################################################################################################################################################
+
+use utf8;
+use Net::WebSocket::Server;				# websocket server
+use Convert::Base64;					# base64 encode/decode
+use Data::Dumper;					# debugging output
+
+my %transport;						# transport encoding for each connection (BINARY, BASE64, HEX)
+my %clientkey;						# client keys
+
+$SIG{INT} = \&server_shutdown;				# graceful shutdown (not implemented)
+
+Net::WebSocket::Server->new(				# websocket server
+
+	listen => $server_port,				# network port number we listen to
+
+	tick_period => 5,				# seconds between timestamp/tick events (5 seconds or less)
+
+	on_tick => sub {				##################################################################################################
+
+#		debug("tick..");			# timestamp tick/heartbeat
+		
+	},
+
+	on_connect => sub {				##################################################################################################
+
+		my ($serv, $conn) = @_;
+
+		$conn->on(
+													##################################
+			binary => sub {									# received binary (ciphertext) : data
+
+				my ($conn, $msg) = @_;
+
+				foreach ($serv->connections) {						# send to all connected clients
+					writeClient($_, $msg);				
+				}
+
+			},
+													##################################
+			utf8 => sub {									# received text 
+
+				my ($conn, $msg) = @_;	
+
+				if ( $msg =~ m/^BINARY/ || $msg =~ m/^HEX/ || $msg =~ m/^BASE64/) {	# client subscription
+
+					($transport->{$conn}, $clientkey->{$conn}) = split(':', $msg);	# store connection type and client key
+
+					$conn->send_utf8("HELLO\n");					# say hi to the client
+
+					debug("new client : $clientkey->{$conn}");
+				}
+
+				else {
+
+					my $msg_binary = $msg;						# assume client sent binary data
+
+					if ($transport->{$conn} eq 'BASE64') {				# convert from base64 if required
+						$msg_binary = decode_base64($msg);				
+					}								
+
+					elsif ($transport->{$conn} eq 'HEX') {				# convert from hexstring if required
+						$msg_binary = pack("H*", $msg);	
+					}
+
+					foreach ($serv->connections) {					# broadcast to all clients
+
+						writeClient($_, $msg_binary);
+					}
+				}
+			},
+		);
+	},
+)->start;
+
+
+#############################################################################################################################################################################
+#
+# debug output
+#
+sub debug {
+
+	print "$_[0]\n";			#TODO: Best to send this to a logfile
+}
+
+
+#############################################################################################################################################################################
+#
+# shutdown server
+#
+sub server_shutdown {
+
+	debug("shutting down...");
+
+	exit; 					#TODO: broadcast a shutdown message to all clients
+}
+
+
+#############################################################################################################################################################################
+#
+# send data to websocket client using their transport encoding
+#
+sub writeClient {
+
+	my ($conn, $binary) = @_;
+
+	if ($transport->{$conn} eq 'BINARY') {				# android clients, most efficient method
+		$conn->send_binary($binary);
+	}
+
+	elsif ($transport->{$conn} eq 'BASE64') {			# perl clients as their binary method is borked
+		$conn->send_utf8(encode_base64($binary));
+	}
+
+	elsif ($transport->{$conn} eq 'HEX') {				# nice for debugging but not really useful
+		$conn->send_utf8(unpack("H*", $binary));
+	}
+}
+
