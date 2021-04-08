@@ -86,5 +86,29 @@ sub encrypt {
 	return($iv . $ciphertext);						# return binary scalar
 }
 
-1;										# have to return true, we're a package
+
+#######################################################################################################################################
+#
+# generate random string to use as a key (64 hex chars only, 32 bytes, 256-bits) 
+#
+sub keyRandom {	
+
+	my ($key_length, $key_type) = @_;
+
+	my @chars = ('a'..'z', 'A'..'Z', '0'..'9');
+	if ($key_type eq "") {						# alpha string if any key type arg is given
+		@chars = ('a'..'f', '0'..'9');				# default key type : lower case hex string
+	}
+
+	if ($key_length eq "") {					# default key length is 64 chars
+		$key_length = 64;
+	}
+
+	my $key_random = '';					
+	$key_random .= $chars[rand @chars] for 1..$key_length;		# add random chars 
+
+	return($key_random);
+}
+
+1;
 
