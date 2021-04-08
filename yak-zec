@@ -72,7 +72,7 @@ my $config = { 						# DEFAULT CONFIGURATION
 	web_port => 8834,				#
 	librust => '/home/bob/github/zcash/target/debug/librustzcash.so',		# path to librustzcash.so (dynamic library built from librustzcash)
 	xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn',
-	taddr => 1					# ignore transparent txns by default
+	taddr => 1					# ignore transparent txns by default, 1 = monitor, 0 = ignore
 };
 
 #TODO: process command line to over-ride default config
@@ -224,20 +224,22 @@ while ($running) {
 			my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};	# shielded outputs
 	
 			my $packet = pack("H*", '0000');			# websocket packet, type 0x00, version 0x00
-			$packet .= $zmq_parts[1];				# 32-bytes, txid received from ZMQ
+			$packet .= pack("H*", $txn->{'txid'});			# 32-bytes, txid
 	
 			if ($config->{'taddr'} > 0) {				# default is to ignore transparent outputs
 				$packet .= pack("L", scalar @vout);		# 32-bit, count of transparent outputs
 				foreach $op (@vout) {
 					debug("$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
 					$packet .= pack("H*", sprintf("%016s", substr(Math::BigInt->new($op->{'valueZat'})->as_hex(), 2)));	# 8-bytes, valueZat
-					$packet .= pack("A35", $op->{'valueZat'});								# 35-bytes, address
+					$packet .= pack("A35", $op->{'scriptPubKey'}->{'addresses'}[0]);					# 25-bytes, taddr
 				}
 			}
 			else {							# ignore transparent outputs
 				$packet .= pack("L", 0);
 			}
 	
+			# NOTE: Packets are correct to this point :-)
+			#
 			my $shielded_count = 0;
 			my $shielded_data = '';
 	
@@ -264,22 +266,19 @@ while ($running) {
 						else {				# monitored shielded address
 
 							debug("******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
-	
-							$shielded_count++;							# TODO: Increase count of shielded transactions	
-							my $shielded_out .= $result->{'value'};	# 8-bytes, value in zats	# TODO: Add shielded data
-						        $shielded_out    .= $result->{'memo'};	# 512 bytes, null padded memo
-	
-																# TODO: Encrypt AES256 with xfvk as the excryption key
-							$shielded_data .= $shielded_out;					# TODO: Append ciphertext 
-						}
 
+							$shielded_count++;									# add shielded output, encrypted with viewkey
+							$shielded_data .= encryptAES(keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	
+						}
 						last VIEWKEY;									# break out of the loop, no need to try remaining keys
 					}
 				}
 			}
-			$packet .= pack("L", $shielded_count);			# TODO: 32-bit, count of decoded shielded outputs
-			$packet .= $shielded_data; 				# TODO: Append shielded output ciphertext
+			$packet .= pack("L", $shielded_count);			# 32-bit, count of decoded shielded outputs
+			$packet .= $shielded_data; 				# append shielded outputs
 	
+			print "PACKET: " . unpack("H*", $packet) . "\n";
+
 			if ($tcp_socket) {					# send to websocket server (if connected)
 				$client->write(encode_base64($packet));		
 			}
@@ -501,14 +500,14 @@ sub xfvk_check {
 
 #######################################################################################################################################
 #
-# generate key from a string, input can be a raw ascii string OR hex chars
+# generate key from a string, input can be a raw ascii string OR hex chars, output is 32-byte binary
 #
 sub keyGen {
 
-	if ($_[0] =~ m/[^0-9a-fA-F]/) {					# string contains non-hex, hash char byte values
+	if ($_[0] =~ m/[^0-9a-fA-F]/) {					# hash char byte values
 		return(sha256(pack("A*", $_[0])));
 	}
-	else {								# string is hex-encoded, hash byte values
+	else {								# hash byte values
 		return(sha256(pack("H*", $_[0])));
 	}
 }
@@ -535,7 +534,7 @@ sub decryptAES {
 		my $cipher = Crypt::CBC->new({ 					# setup encyption
 			'key' => $key,
 			'cipher' => 'OpenSSL::AES',
-			'blocksize' => 16,
+#			'blocksize' => 16,					# TODO: Error, apparently blocksize is not an option anymore ??
 			'header' => 'none',
 			'iv' => pack("H*", $ivHEX),
 			'literal_key' => 1,					
@@ -562,7 +561,7 @@ sub encryptAES {
 	my $cipher = Crypt::CBC->new({ 						# setup encyption
 		'key' => $key,
 		'cipher' => 'OpenSSL::AES',
-		'blocksize' => 16,
+#		'blocksize' => 16,						# TODO: Error, apparently blocksize is not an option anymore ??
 		'header' => 'none',
 		'iv' => $iv,
 		'literal_key' => 1,				
