@@ -7,18 +7,14 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-# TODO: Move websocket server URI to default settings
 # TODO: Process command line args to overwrite default settings
-# TODO: Confirm zaddr derived from FVK has been imported to the node
-# TODO: Load viewkeys from zaddr on startup
-# TODO: Listen for new viewkeys to monitor while running (which will need viewkey!)
-# TODO: Try all keys on all shielded transactions
-# TODO: Add option to listen for transparent transactions (default should be to ignore them)
+# TODO: Confirm zaddr derived from FVK has been imported to the node, otherwise abort
 # TODO: Use the viewkey as an encryption key & AES256 encrypt shielded outputs BEFORE sending
-# DONE: Ignore transparent outputs by default
+# TODO: Add pricing/expiry for viewkey monitoring, zats per block seems a good method
+# TODO: Add messaging to clients for when a viewkey is added/removed
 
-# ISSUE: Would be nice to ONLY support IVKs, a payment detector does not need to know about outgoing transactions.
-# ISSUE: The payment address cannot be derived from an IVK
+# ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
+# ISSUE: The payment address cannot be derived from an IVK, so maybe not.
 
 #########################################################################################################################################################################
 #
@@ -91,6 +87,9 @@ my $config = { 						# DEFAULT CONFIGURATION
 
 my $running = 1;						# running flag
 
+my $timeout_reset = 1000;					# timeout counter (10 seconds)
+my $timeout = $timeout_reset;
+
 my $ffi = FFI::Platypus->new( api => 1);												# FFI to librustzcash
 $ffi->lib( $config->{'librust'} );													# load library
 
@@ -100,10 +99,16 @@ $ffi->attach( 'librustzcash_crh_ivk' => [ 'string', 'string', 'opaque' ] => 'voi
 
 my @viewkey;							# array of ExtendedFullViewingKeys we monitor
 
-if (xfvk_check($config->{'xfvk'})) {				# check our registration key is valid
+$config->{'xfvk'} = xfvk_check($config->{'xfvk'});		# check our registration key is valid
+
+if ($config->{'xfvk'}) {	
 	push(@viewkey, $config->{'xfvk'});
 	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});	# derive address from xfvk
 	debug("REG: $config->{'addr'}");
+}
+else {								# MUST have a valid registration viewkey
+	print("Registration viewkey is NOT VALID ! Aborting\n");
+	exit(1);
 }
 
 my $client_ident = keyRandom(32,'A');				# generate random client id for this client
@@ -152,7 +157,7 @@ $client->on(							# websocket read method
 		debug("RX: $buf");
 
 		if ($buf =~ m/^HELLO/) {			# receive server welcome message
-			debug("connected to websocket server");
+			debug("Connected to socket server");
 		}
 	}
 );
@@ -170,14 +175,15 @@ my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');	# last bloc
 foreach my $txn (@{node_cli("z_listreceivedbyaddress $config->{'addr'}")}) {	# check registration address for viewkeys to load
 
 	my @line = split("\n", hex_to_ascii($txn->{'memo'})); 			# convert to ascii & split it lines
+
 	foreach $line (@line) {		
-		if (xfvk_check($line)) {					# add if valid
-			push(@viewkey, $line);					# TODO: Prob want to check min value before adding, unless its free :-)
-			print "Monitoring : $line\n";
+		$line =~ s/\0//g;					# strip nulls
+		if (xfvk_check($line)) {				# add if valid
+			push(@viewkey, $line);				# TODO: Prob want to check min value before adding, unless its free :-)
+			print "Monitoring : " . xfvk_to_addr($line) . "\n";
 		}
 	}
 }
-
 debug("Monitoring " . scalar @viewkey . " viewkeys\n");			# ready
 
 
@@ -197,95 +203,109 @@ while ($running) {
 		}
 	}
 
-	until ($zmq_socket->has_pollin) {				# wait until zmq says something
+	$timeout = $timeout_reset;
+
+	until ($zmq_socket->has_pollin || ($timeout == 0) ) {			# wait until zmq says something
 		usleep 100_00;
+		$timeout--;
 	}
-	my @zmq_parts = $zmq_socket->recv_multipart();			# 
 
-	if ($zmq_parts[0] eq 'rawtx') {					# raw transaction	
-			
-		my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');	# node client decodes raw transaction, dont abort on failure
+	if ($zmq_socket->has_pollin) {
 
-		my @vout            = @{$txn->{'vout'}};					# transparent outputs
-		my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};				# shielded outputs
+		$timeout = $timeout_reset;					# reset timeout counter;
 
-		my $packet = pack("H*", '0000');			# websocket packet, type 0x00, version 0x00
-		$packet .= $zmq_parts[1];				# 32-bytes, txid received from ZMQ
+		my @zmq_parts = $zmq_socket->recv_multipart();			# read ZMQ
 
-		if ($config->{'taddr'} > 0) {				# default is to ignore transparent outputs
-			$packet .= pack("L", scalar @vout);		# 32-bit, count of transparent outputs
-			foreach $op (@vout) {
-				debug("$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
-				$packet .= pack("H*", sprintf("%016s", substr(Math::BigInt->new($op->{'valueZat'})->as_hex(), 2)));	# 8-bytes, valueZat
-				$packet .= pack("A35", $op->{'valueZat'});								# 35-bytes, address
-			}
-		}
-		else {							# ignore transparent outputs
-			$packet .= pack("L", 0);
-		}
-
-		my $shielded_count = 0;
-		my $shielded_data = '';
-
-		foreach my $vout (@{$txn->{'vShieldedOutput'}}) {
-
-			foreach my $xfvk (@viewkeys) {			# try all our viewkeys
-
-									# attempt decryption
-				my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
-
-				if ($result->{'status'} == 1) {
-
-					if ($xfvk eq $viewkey[0]) {	# is this our registration viewkey ?
+		if ($zmq_parts[0] eq 'rawtx') {					# raw transaction	
 				
-						my @line = split("\n", unpack("A*", $result->{'memo'}));		# could be multiline
-						foreach $line (@line) {							# check each line
-							if (xfvk_check($line)) {					# is it a valid ExtendedFullViewingKey ?
-								push(@viewkey, $line);					# TODO: Prob want to check min value before adding, unless its free :-)
-								debug ("Monitoring : $line");
+			my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');	# node client decodes raw transaction, dont abort on failure
+
+			my @vout            = @{$txn->{'vout'}};		# transparent outputs
+			my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};	# shielded outputs
+	
+			my $packet = pack("H*", '0000');			# websocket packet, type 0x00, version 0x00
+			$packet .= $zmq_parts[1];				# 32-bytes, txid received from ZMQ
+	
+			if ($config->{'taddr'} > 0) {				# default is to ignore transparent outputs
+				$packet .= pack("L", scalar @vout);		# 32-bit, count of transparent outputs
+				foreach $op (@vout) {
+					debug("$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+					$packet .= pack("H*", sprintf("%016s", substr(Math::BigInt->new($op->{'valueZat'})->as_hex(), 2)));	# 8-bytes, valueZat
+					$packet .= pack("A35", $op->{'valueZat'});								# 35-bytes, address
+				}
+			}
+			else {							# ignore transparent outputs
+				$packet .= pack("L", 0);
+			}
+	
+			my $shielded_count = 0;
+			my $shielded_data = '';
+	
+			OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {
+	
+				VIEWKEY: foreach my $xfvk (@viewkey) {			# try all our viewkeys
+
+					my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
+	
+					if ($result->{'status'} == 1) {		# decrypted !!! Wooooo!!!! 
+
+						if ($xfvk eq $viewkey[0]) {	# is this our registration viewkey ?
+					
+							my @line = split("\n", unpack("A*", $result->{'memo'}));		# could be multiline
+							foreach $line (@line) {							# check each line
+
+								$line = xfvk_check($line);					# is it a valid ExtendedFullViewingKey ?
+								if ($line) {
+									debug("****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . hex(unpack("H*", $result->{'value'})));
+									push(@viewkey, $line);					# TODO: Prob want to check min value before adding, unless its free :-)
+								}
 							}
 						}
-					}
-					else {				# not our registration viewkey
+						else {				# monitored shielded address
 
-						debug("SHIELDED TRANSACTION : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
+							debug("******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
+	
+							$shielded_count++;							# TODO: Increase count of shielded transactions	
+							my $shielded_out .= $result->{'value'};	# 8-bytes, value in zats	# TODO: Add shielded data
+						        $shielded_out    .= $result->{'memo'};	# 512 bytes, null padded memo
+	
+																# TODO: Encrypt AES256 with xfvk as the excryption key
+							$shielded_data .= $shielded_out;					# TODO: Append ciphertext 
+						}
 
-						$shielded_count++;							# TODO: Increase count of shielded transactions	
-
-						my $shielded_out .= $result->{'value'};	# 8-bytes, value in zats	# TODO: Add shielded data
-					        $shielded_out    .= $result->{'memo'};	# 512 bytes, null padded memo
-
-															# TODO: Encrypt AES256 with xfvk as the excryption key
-						$shielded_data .= $shielded_out;					# TODO: Append ciphertext 
+						last VIEWKEY;									# break out of the loop, no need to try remaining keys
 					}
 				}
 			}
+			$packet .= pack("L", $shielded_count);			# TODO: 32-bit, count of decoded shielded outputs
+			$packet .= $shielded_data; 				# TODO: Append shielded output ciphertext
+	
+			if ($tcp_socket) {					# send to websocket server (if connected)
+				$client->write(encode_base64($packet));		
+			}
 		}
-		$packet .= pack("L", $shielded_count);			# TODO: 32-bit, count of decoded shielded outputs
-		$packet .= $shielded_data; 				# TODO: Append shielded output ciphertext
-
-
-		if ($tcp_socket) {					# send to websocket server (if connected)
-			$client->write(encode_base64($packet));		
-		}
-	}
-
-	elsif ($zmq_parts[0] eq 'hashblock') {				# new block, confirm mined txn
-
-		$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');	# update block, abort on failure
-
-		my $packet = pack("H*",'0100');				# websocket packet, type 0x01, version 0x00
-		$packet .= pack("L", scalar @{$block->{'tx'}});		# 32-bit, count of txids
-
-		foreach my $txid (@{$block->{'tx'}}) {			# 32-bytes each, txids mined in this block
-			debug("Confirming: $txid");
-			$packet .= pack("H*",$txid);			# 32-bytes each
-		}
-
-		if ($tcp_socket) {					# send to websocket server (if connected)
-			$client->write(encode_base64($packet));		
+	
+		elsif ($zmq_parts[0] eq 'hashblock') {				# new block, confirm mined txn
+	
+			$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');	# update block, abort on failure
+	
+			my $packet = pack("H*",'0100');				# websocket packet, type 0x01, version 0x00
+			$packet .= pack("L", scalar @{$block->{'tx'}});		# 32-bit, count of txids
+	
+			foreach my $txid (@{$block->{'tx'}}) {			# 32-bytes each, txids mined in this block
+				debug("Confirming: $txid");
+				$packet .= pack("H*",$txid);			# 32-bytes each
+			}
+	
+			if ($tcp_socket) {					# send to websocket server (if connected)
+				$client->write(encode_base64($packet));		
+			}
 		}
 	}	
+	else {									# timeout, so check node is still up or abort
+		$info  = node_cli('getblockchaininfo', '', 'abort');
+	}
+	$timeout = $timeout_reset;						# node is OK, reset timeout
 }
 
 debug("exit...");
@@ -347,8 +367,8 @@ sub node_cli {
 	}
 	else {										# bad response
 		if ($failure eq 'abort') {						# 'abort' flag means we shutdown now
-			print("Node is down, aborting");
-			$running = 0;
+			print("Node is down, aborting\n");
+			exit(1);
 		}
 	}
 }
@@ -368,7 +388,8 @@ sub xfvk_to_ivk {
 
 	my ($xfvk_str) = @_;
 
-	if (!xfvk_check($xfvk_str)) {							# check length & prefix
+	$xfvk_str = xfvk_check($xfvk_str);						# check length & prefix
+	if (!$xfvk_str) {								# 
 		return(0);
 	}
 
@@ -396,7 +417,8 @@ sub xfvk_to_addr {
 
 	my ($xfvk_str) = @_;								# bech32 encoded extended full viewkey
 
-	if (!xfvk_check($xfvk_str)) {							# check length & prefix
+	$xfvk_str = xfvk_check($xfvk_str);						# check length & prefix
+	if (!$xfvk_str) {								# 
 		return(0);
 	}
 	else {
@@ -426,7 +448,8 @@ sub decrypt_note {
 
 	my ($height, $xfvk, $cmu, $epk, $enc_ciphertext) = @_;				# height (int), hex-encoded strings (all other vars)
 
-	if (!xfvk_check($xfvk)) {							# check viewkey for length & prefix
+	$xfvk = xfvk_check($xfvk);							# check viewkey for length & prefix
+	if (!$xfvk) {									# 
 		return(0);
 	}
 
@@ -457,17 +480,22 @@ sub decrypt_note {
 #
 sub xfvk_check {
 
-	my ($xfvk_str) = @_;	# bech32 encoded extended full viewkey
+	my ($xfvk_str) = @_;				# bech32 encoded extended full viewkey
 
-	if (length($xfvk_str) != 285) {			
-#		debug("xfvk_to_addr() : full viewkey was not the correct length, expected 285 chars, received \'$xfvk_str\'");
-		return(0);
-	}
-	elsif (index($xfvk_str, 'zxviews') != 0) {
+	$xfvk_str =~ s/\0//g;				# strip null padding
+	$xfvk_str =~ s/\s//g;				# strip whitespace
+
+	if (index($xfvk_str, 'zxviews') != 0) {
 #		debug("xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\', received \'$xfvk_str\'");
 		return(0);
 	}
-	return(1);		# viewing key is valid
+	elsif (length($xfvk_str) < 285) {			
+#		debug("xfvk_to_addr() : full viewkey too short, expected 285 chars, received " . length($xfvk_str) . " bytes" . "\n");
+		return(0);
+	}
+
+	$xfvk_str = substr($xfvk_str,0,285);		# chop key to correct length
+	return($xfvk_str);				# viewing key is valid, return cleaned value
 }
 
 
