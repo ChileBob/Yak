@@ -50,7 +50,6 @@ sub decrypt {
 		my $cipher = Crypt::CBC->new({ 					# setup encyption
 			'key' => $key,
 			'cipher' => 'OpenSSL::AES',
-#			'blocksize' => 16,					# TODO: Error, apparently blocksize is not an option anymore ??
 			'header' => 'none',
 			'iv' => pack("H*", $ivHEX),
 			'literal_key' => 1,					
@@ -77,7 +76,6 @@ sub encrypt {
 	my $cipher = Crypt::CBC->new({ 						# setup encyption
 		'key' => $key,
 		'cipher' => 'OpenSSL::AES',
-#		'blocksize' => 16,						# TODO: Error, apparently blocksize is not an option anymore ??
 		'header' => 'none',
 		'iv' => $iv,
 		'literal_key' => 1,				
