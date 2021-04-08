@@ -2,6 +2,11 @@
 #
 # tweaked version of https://github.com/brtastic/perl-bitcoin-crypto/blob/master/lib/Bitcoin/Crypto/Bech32.pm
 #
+# MIT License (ChileBob)
+#
+# Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
+# Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
+#
 # - removed Bitcoin stuff as this is for zcash/ycash
 # 	- no segwit
 # 	- different address length
@@ -14,6 +19,10 @@ my $CHECKSUM_SIZE = 6;
 
 my %alphabet_mapped = map { $alphabet[$_] => $_ } 0 .. $#alphabet;
 
+#######################################################################################################################################
+#
+# generate polymod
+#
 sub polymod
 {
 	my ($values) = @_;
@@ -29,6 +38,10 @@ sub polymod
 	return $chk;
 }
 
+#######################################################################################################################################
+#
+# expand human readable part
+#
 sub hrp_expand
 {
 	my @hrp = split "", shift;
@@ -41,6 +54,10 @@ sub hrp_expand
 	return [@part1, 0, @part2];
 }
 
+#######################################################################################################################################
+#
+# convert to char value
+#
 sub to_numarr
 {
 	my ($string) = @_;
@@ -48,6 +65,10 @@ sub to_numarr
 	return [map { $alphabet_mapped{$_} } split "", $string];
 }
 
+#######################################################################################################################################
+#
+# generate checksum
+#
 sub create_checksum
 {
 	my ($hrp, $data) = @_;
@@ -60,6 +81,10 @@ sub create_checksum
 	return $checksum;
 }
 
+#######################################################################################################################################
+#
+# verify checksum
+#
 sub verify_checksum
 {
 	my ($hrp, $data) = @_;
@@ -67,6 +92,10 @@ sub verify_checksum
 	return polymod([@{hrp_expand $hrp}, @{to_numarr $data}]) == 1;
 }
 
+#######################################################################################################################################
+#
+# encode data as base32
+#
 sub encode_base32
 {
 	my ($bytes) = @_;
@@ -82,6 +111,10 @@ sub encode_base32
 	return $result;
 }
 
+#######################################################################################################################################
+#
+# decode base32 data
+#
 sub decode_base32
 {
 	my ($encoded) = @_;
@@ -104,6 +137,10 @@ sub decode_base32
 	return $result;
 }
 
+#######################################################################################################################################
+#
+# encode data as bech32
+#
 sub encode_bech32
 {
 	my ($hrp, $bytes) = @_;
@@ -115,6 +152,10 @@ sub encode_bech32
 	return $hrp . 1 . $result . $checksum;
 }
 
+#######################################################################################################################################
+#
+# split bech32 data into human readable part, data & checksum
+#
 sub split_bech32
 {
 	my ($bech32enc) = @_;			# bech32 encoded string
@@ -135,6 +176,10 @@ sub split_bech32
 	return \@parts;
 }
 
+#######################################################################################################################################
+#
+# decode bech32 string
+#
 sub decode_bech32
 {
 	my ($bech32enc) = @_;
@@ -144,4 +189,5 @@ sub decode_bech32
 	return decode_base32($parts[1]);
 }
 
+1;
 

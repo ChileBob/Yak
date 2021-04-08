@@ -9,7 +9,11 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-my $server_port = 8834;					# websocket port number 
+my $config = {						# default configuration
+	port =>  8834,
+	tick =>  5,
+	debug => 1
+};
 
 ###################################################################################################################################################
 #
@@ -29,13 +33,13 @@ $SIG{INT} = \&server_shutdown;				# graceful shutdown (not implemented)
 
 Net::WebSocket::Server->new(				# websocket server
 
-	listen => $server_port,				# network port number we listen to
+	listen => $config->{'port'},			# network port number we listen to
 
-	tick_period => 5,				# seconds between timestamp/tick events (5 seconds or less)
+	tick_period => $config->{'tick'},		# seconds between timestamp/tick events (5 seconds or less)
 
 	on_tick => sub {				##################################################################################################
 
-#		debug("tick..");			# timestamp tick/heartbeat
+		debug(5, "tick..");			# timestamp tick/heartbeat
 		
 	},
 
@@ -65,7 +69,7 @@ Net::WebSocket::Server->new(				# websocket server
 
 					$conn->send_utf8("HELLO\n");					# say hi to the client
 
-					debug("new client : $clientkey->{$conn}");
+					debug(1, "Connect : $clientkey->{$conn}");
 				}
 
 				else {
@@ -97,7 +101,11 @@ Net::WebSocket::Server->new(				# websocket server
 #
 sub debug {
 
-	print "$_[0]\n";			#TODO: Best to send this to a logfile
+	my ($level, $message) = @_;
+
+	if ($config->{'debug'} >= $level) {
+		print "$message\n";		#TODO: Best to send this to a logfile
+	}
 }
 
 
@@ -123,14 +131,17 @@ sub writeClient {
 
 	if ($transport->{$conn} eq 'BINARY') {				# android clients, most efficient method
 		$conn->send_binary($binary);
+		debug(5, "writeClient() : BINARY");
 	}
 
 	elsif ($transport->{$conn} eq 'BASE64') {			# perl clients as their binary method is borked
 		$conn->send_utf8(encode_base64($binary));
+		debug(5, "writeClient() : BASE64");
 	}
 
 	elsif ($transport->{$conn} eq 'HEX') {				# nice for debugging but not really useful
 		$conn->send_utf8(unpack("H*", $binary));
+		debug(5, "writeClient() : HEX");
 	}
 }
 

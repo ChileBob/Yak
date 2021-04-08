@@ -1,0 +1,150 @@
+#!/usr/bin/perl
+#
+# yak-client : simple websocket client for Yak
+#
+# MIT License (ChileBob)
+#
+# Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
+# Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
+
+use Data::Dumper;					# debugging output
+use IO::Socket::INET;					# general purpose networking
+use Protocol::WebSocket::Client;			# websocket client
+use Convert::Base64;					# transport encoding for perl clients
+use String::HexConvert ':all';				# convert hex-encoded strings to ascii
+
+							# ChileBob Packages
+							#
+require './bech32.pm';					# bech32 encode/decode 
+require './aes256.pm';					# AES256 encrypt/decrypt
+require './packet.pm';					# yak packet encode/decode
+
+my $config = { 						# DEFAULT CONFIGURATION
+	client_ident => keyRandom(32, 'A'),		# create a new random client ident
+	web_type => 'ws',				# websocket server
+	web_addr => '127.0.0.1',			#
+	web_port => 8834,				#
+	debug => 5					# debug verbosity
+};
+
+#TODO: process command line to over-ride default config
+#TODO: show help, command line args & exit
+
+
+#########################################################################################################################################################################
+#
+# CHANGING ANYTHING BELOW THIS LINE IS A REALLY BAD IDEA !! IF YOU BREAK IT, YOU GET TO KEEP THE PEICES
+#
+#########################################################################################################################################################################
+
+my $running = 1;						# running flag
+
+my $tcp_socket = IO::Socket::INET->new(				# connect to websocket server (blocking)
+	PeerAddr => $config->{'web_addr'},			#
+	PeerPort => $config->{'web_port'},			#
+	Proto => 'tcp',						#
+	Blocking => 1						# can be blocking, all we do is send
+);
+
+if (!$tcp_socket) {						# confirm connection
+	debug (1, "WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
+}
+								# start websocket client
+my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");
+
+$client->on(							# websocket connect method
+	connect => sub {
+		my $client = shift;
+	}
+);
+
+$client->on(
+	write => sub {						# websocket write method
+		my $client = shift;
+		my ($buf) = @_;
+		syswrite $tcp_socket, $buf;
+		sleep(1);
+	}
+);
+
+$client->on(							# websocket read method
+	read => sub {
+		my $client = shift;
+		my ($buf) = @_;
+
+		if ($buf =~ m/^HELLO/) {			# parse received messages
+			debug(1, "Connected!");
+		}
+		else {
+			print "wasnt a hello !\n";
+		}
+
+	}
+);
+
+$client->connect;							# connect to websocket server
+
+$client->write("BASE64:$config->{'client_ident'}");			# subscribe for BASE64 transport & send our client ID
+
+while ($running) {
+
+	if ($tcp_socket) {						# listen to websocket server (if connected)
+
+		my $recv_data;							# read from websocket
+		my $bytes_read = sysread $tcp_socket, $recv_data, 16384;	# make sure its correct
+	
+		if (!defined $bytes_read) { 
+			debug(0, "Failed to read from network socket");
+			exit;
+		}
+		elsif ($bytes_read == 0) { 
+			debug(0, "Websocket connection terminated");
+			exit;
+		}
+		$client->read($recv_data); 				# this is where we parse what we read....
+	}
+}
+
+debug(0, "exit...");
+
+exit;
+
+
+#########################################################################################################################################################################
+#
+# debugging
+#
+sub debug {
+
+	my ($level, $message) = @_;
+	
+	if ($level <= $config->{'debug'}) { 				# TODO : Send to logfile ? Maybe not (privacy!)
+		print "$message\n";
+	}
+}
+
+
+#######################################################################################################################################
+#
+# generate random hex string to use as a key (64 hex chars only, 32 bytes, 256-bits) 
+#
+sub keyRandom {	
+
+	my ($key_length, $key_type) = @_;
+
+	my @chars = ('a'..'z', 'A'..'Z', '0'..'9');
+	if ($key_type eq "") {						# alpha string if any key type arg is given
+		@chars = ('a'..'f', '0'..'9');				# default key type : lower case hex string
+	}
+
+	if ($key_length eq "") {					# default key length is 64 chars
+		$key_length = 64;
+	}
+
+	my $key_random = '';					
+	$key_random .= $chars[rand @chars] for 1..$key_length;		# add random chars 
+
+	return($key_random);
+}
+
+
