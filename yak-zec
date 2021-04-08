@@ -32,7 +32,7 @@
 # 	<taddr count>	uint32										(number of transparent outputs)
 # 	<taddr data>	<taddr_count> * (<amount 8-bytes> + <address 35-bytes>)				(transparent output data)
 # 	<zaddr count>	uint32										(number of shielded outputs)
-#	<zaddr data>	<zaddr_count> * (<amount 8-bytes> + <memo 512-bytes>)				(decoded shielded output data)
+#	<zaddr data>	<zaddr_count> * (<ciphertext 544-bytes>)					(shielded output ciphertext : AES256)
 #
 #	<type>		u8										('0x01' : type, txn confirmation)
 #	<version>	u8										('0x00' : version)
@@ -61,7 +61,7 @@ use FFI::Platypus::Memory qw( malloc memcpy free);	#
 
 require './bech32.pm';					# bech32 encode/decode 
 
-my $debug = 1;						# debug mode, 0 = quiet
+my $debug = 2;						# debug mode, 0 = quiet, higher = more verbose
 
 my $config = { 						# DEFAULT CONFIGURATION
 
@@ -104,7 +104,7 @@ $config->{'xfvk'} = xfvk_check($config->{'xfvk'});		# check our registration key
 if ($config->{'xfvk'}) {	
 	push(@viewkey, $config->{'xfvk'});
 	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});	# derive address from xfvk
-	debug("REG: $config->{'addr'}");
+	debug(1, "REG: $config->{'addr'}");
 }
 else {								# MUST have a valid registration viewkey
 	print("Registration viewkey is NOT VALID ! Aborting\n");
@@ -112,9 +112,9 @@ else {								# MUST have a valid registration viewkey
 }
 
 my $client_ident = keyRandom(32,'A');				# generate random client id for this client
-debug("ID : $client_ident");				
+debug(1, "ID : $client_ident");				
 
-debug("ZMQ: $config->{'zmq'}");
+debug(1, "ZMQ: $config->{'zmq'}");
 my $ctx = ZMQ::FFI->new();					# ZMQ connection
 
 my $zmq_socket = $ctx->socket(ZMQ_SUB);				# ZMQ socket
@@ -129,7 +129,7 @@ my $tcp_socket = IO::Socket::INET->new(				# connect to websocket server (blocki
 );
 
 if (!$tcp_socket) {						# confirm connection
-	debug ("WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
+	debug (1, "WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
 }
 								# start websocket client
 my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");
@@ -154,10 +154,10 @@ $client->on(							# websocket read method
 		my $client = shift;
 		my ($buf) = @_;
 
-		debug("RX: $buf");
+		debug(2, "RX: $buf");
 
 		if ($buf =~ m/^HELLO/) {			# receive server welcome message
-			debug("Connected to socket server");
+			debug(1, "Connected to socket server");
 		}
 	}
 );
@@ -184,7 +184,6 @@ foreach my $txn (@{node_cli("z_listreceivedbyaddress $config->{'addr'}")}) {	# c
 		}
 	}
 }
-debug("Monitoring " . scalar @viewkey . " viewkeys\n");			# ready
 
 
 while ($running) {
@@ -194,11 +193,11 @@ while ($running) {
 		my $bytes_read = sysread $tcp_socket, $recv_data, 16384;	# make sure its correct
 	
 		if (!defined $bytes_read) { 
-			debug("Failed to read from network socket");
+			debug(0, "Failed to read from network socket");
 			exit;
 		}
 		elsif ($bytes_read == 0) { 
-			debug("Websocket connection terminated");
+			debug(0, "Websocket connection terminated");
 			exit;
 		}
 	}
@@ -229,7 +228,7 @@ while ($running) {
 			if ($config->{'taddr'} > 0) {				# default is to ignore transparent outputs
 				$packet .= pack("L", scalar @vout);		# 32-bit, count of transparent outputs
 				foreach $op (@vout) {
-					debug("$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+					debug(3, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
 					$packet .= pack("H*", sprintf("%016s", substr(Math::BigInt->new($op->{'valueZat'})->as_hex(), 2)));	# 8-bytes, valueZat
 					$packet .= pack("A35", $op->{'scriptPubKey'}->{'addresses'}[0]);					# 25-bytes, taddr
 				}
@@ -258,14 +257,14 @@ while ($running) {
 
 								$line = xfvk_check($line);					# is it a valid ExtendedFullViewingKey ?
 								if ($line) {
-									debug("****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . hex(unpack("H*", $result->{'value'})));
+									debug(2, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . hex(unpack("H*", $result->{'value'})));
 									push(@viewkey, $line);					# TODO: Prob want to check min value before adding, unless its free :-)
 								}
 							}
 						}
 						else {				# monitored shielded address
 
-							debug("******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
+							debug(2, "******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
 
 							$shielded_count++;									# add shielded output, encrypted with viewkey
 							$shielded_data .= encryptAES(keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	
@@ -274,11 +273,9 @@ while ($running) {
 					}
 				}
 			}
-			$packet .= pack("L", $shielded_count);			# 32-bit, count of decoded shielded outputs
-			$packet .= $shielded_data; 				# append shielded outputs
+			$packet .= pack("L", $shielded_count);			# (4-bytes), count of decoded shielded outputs
+			$packet .= $shielded_data; 				# (544-bytes * count),  append shielded outputs
 	
-			print "PACKET: " . unpack("H*", $packet) . "\n";
-
 			if ($tcp_socket) {					# send to websocket server (if connected)
 				$client->write(encode_base64($packet));		
 			}
@@ -292,7 +289,7 @@ while ($running) {
 			$packet .= pack("L", scalar @{$block->{'tx'}});		# 32-bit, count of txids
 	
 			foreach my $txid (@{$block->{'tx'}}) {			# 32-bytes each, txids mined in this block
-				debug("Confirming: $txid");
+				debug(2, "Confirming: $txid");
 				$packet .= pack("H*",$txid);			# 32-bytes each
 			}
 	
@@ -307,7 +304,7 @@ while ($running) {
 	$timeout = $timeout_reset;						# node is OK, reset timeout
 }
 
-debug("exit...");
+debug(0, "exit...");
 
 exit;
 
@@ -317,10 +314,11 @@ exit;
 # debugging
 #
 sub debug {
+
+	my ($level, $message) = @_;
 	
-	# TODO : Send to logfile ? Maybe not (privacy!)
-	if ($debug) {
-		print "$_[0]\n";
+	if ($level <= $debug) { 					# TODO : Send to logfile ? Maybe not (privacy!)
+		print "$message\n";
 	}
 }
 
