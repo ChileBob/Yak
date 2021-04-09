@@ -30,7 +30,8 @@ my $config = {						# default configuration
 use utf8;
 use Net::WebSocket::Server;				# websocket server
 use Convert::Base64;					# base64 encode/decode
-use Data::Dumper;					# debugging output
+
+require './common.pm';					# common subs
 
 my %transport;						# transport encoding for each connection (BINARY, BASE64)
 my %clientkey;						# client keys
@@ -45,7 +46,7 @@ Net::WebSocket::Server->new(				# websocket server
 
 	on_tick => sub {				##################################################################################################
 
-		debug(5, "tick..");			# timestamp tick/heartbeat
+		common::debug($config->{'debug'}, "tick..");			# timestamp tick/heartbeat
 		
 	},
 
@@ -75,7 +76,7 @@ Net::WebSocket::Server->new(				# websocket server
 
 					$conn->send_utf8("HELLO\n");					# say hi to the client
 
-					debug(1, "Connect : $clientkey->{$conn}");
+					common::debug($config->{'debug'}, "Connect : $clientkey->{$conn}");
 				}
 
 				else {
@@ -96,19 +97,6 @@ Net::WebSocket::Server->new(				# websocket server
 )->start;
 
 
-#############################################################################################################################################################################
-#
-# debug output
-#
-sub debug {
-
-	my ($level, $message) = @_;
-
-	if ($config->{'debug'} >= $level) {
-		print "$message\n";		#TODO: Best to send this to a logfile
-	}
-}
-
 
 #############################################################################################################################################################################
 #
@@ -116,9 +104,11 @@ sub debug {
 #
 sub server_shutdown {
 
-	debug("shutting down...");
+# TODO: broadcast a shutdown message to all clients
+	
+	common::debug(0, "Bye!");
 
-	exit; 					#TODO: broadcast a shutdown message to all clients
+	exit; 		
 }
 
 
@@ -132,12 +122,12 @@ sub writeClient {
 
 	if ($transport->{$conn} eq 'BINARY') {				# android clients, most efficient method
 		$conn->send_binary($binary);
-		debug(5, "writeClient() : BINARY");
+		common::debug($config->{'debug'}, "writeClient() : BINARY");
 	}
 
 	elsif ($transport->{$conn} eq 'BASE64') {			# perl clients as their binary method is borked
 		$conn->send_utf8(encode_base64($binary));
-		debug(5, "writeClient() : BASE64");
+		common::debug($config->{'debug'}, "writeClient() : BASE64");
 	}
 }
 

@@ -16,6 +16,7 @@ use String::HexConvert ':all';				# convert hex-encoded strings to ascii
 
 							# ChileBob Packages
 							#
+require './common.pm';					# common yak subs
 require './bech32.pm';					# bech32 encode/decode 
 require './aes256.pm';					# AES256 encrypt/decrypt
 require './packet.pm';					# yak packet encode/decode
@@ -28,8 +29,8 @@ my $config = { 						# DEFAULT CONFIGURATION
 	debug => 5					# debug verbosity
 };
 
-#TODO: process command line to over-ride default config
-#TODO: show help, command line args & exit
+# TODO: process command line to over-ride default config
+# TODO: show help, command line args & exit
 
 my $testxfvk = 'zxviews1qwmpy5zhqsqqpqyv8h7n8jjumltlmjwl2hyc8nlk0k2nn4wn2926vj8rhum0d47kq354392kfg4vl4rdcsnnywsxr7j75uqcg8zyaa0v3xx9tgzz4whtfwspw0hnga6mcuslwhwzdz697259z4lqepu7z06wm5szkghuxtsscepks0ya9gs0yur3lsuxs26j5dej2rxqz9qjgk2ds0j45mt6zwx0pzd46ptn3yy5dstz8nv24wql8lwxl5w277nu66vumxutzpa98lq80xkcw';
 
@@ -67,7 +68,7 @@ my $tcp_socket = IO::Socket::INET->new(				# connect to websocket server (blocki
 );
 
 if (!$tcp_socket) {						# confirm connection
-	debug (1, "WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
+	common::debug (0, "WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
 }
 								# start websocket client
 my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");
@@ -93,7 +94,7 @@ $client->on(							# websocket read method
 		my ($buf) = @_;
 
 		if ($buf =~ m/^HELLO/) {			# parse received messages
-			debug(1, "Connected!");
+			common::debug(0, "Connected!");
 		}
 		else {
 
@@ -115,11 +116,11 @@ while ($running) {
 		my $bytes_read = sysread $tcp_socket, $recv_data, 16384;	# make sure its correct
 	
 		if (!defined $bytes_read) { 
-			debug(0, "Failed to read from network socket");
+			common::debug(0, "Failed to read from socket, aborting.");
 			exit;
 		}
 		elsif ($bytes_read == 0) { 
-			debug(0, "Websocket connection terminated");
+			common::debug(0, "Websocket connection terminated.");
 			exit;
 		}
 		$client->read($recv_data); 				# this is where we parse what we read....
@@ -127,21 +128,8 @@ while ($running) {
 	usleep 100_00;							# lets not beat up the server, take a nap
 }
 
-debug(0, "exit...");
+common::debug(0, "Bye!");
 
 exit;
 
-
-#########################################################################################################################################################################
-#
-# debugging
-#
-sub debug {
-
-	my ($level, $message) = @_;
-	
-	if ($level <= $config->{'debug'}) { 				# TODO : Send to logfile ? Maybe not (privacy!)
-		print "$message\n";
-	}
-}
 

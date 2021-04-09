@@ -7,9 +7,12 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
+# TODO: Add packet for yak-zec, yak-yec to advertise their services
+
 package packet;
 
-require './aes256.pm';			# we're going to decrypt things
+require './common.pm';			# common subs
+require './aes256.pm';			# AES encrypt/decrypt
 
 # TRANSPARENT TRANSCTION NOTIFICATION
 #
@@ -34,6 +37,15 @@ require './aes256.pm';			# we're going to decrypt things
 #	<txid count>	uint32										(number of txids)
 #	<txid data>	<count * 32-bytes>								(txids)
 
+# TODO: NODE ANNOUNCEMENT
+#
+#	<type>		u8										('0x03' : type, node service announcement)
+#	<version>	u8										('0x01' : version)
+#	<price>		uint32										(price per block, in zats)
+#	<zaddr>		<78-bytes>									(node registration zaddr)
+#	<memo>		<512-bytes>									(ascii text, null padded)
+
+
 my $version = 1;						# packet type version number
 my $debug   = 0;						# debug verbosity
 
@@ -50,11 +62,11 @@ sub parse {
 
 	use bytes;
 
-	debug(5, "packet::parse() : " . unpack("H*", $packet));
+	common::debug($debug, "packet::parse() : " . unpack("H*", $packet));
 
 	if (unpack("C", substr($packet, 1, 1)) != $version) {	# version check
 
-		debug(5, "packet::parse() : Cant decode version $data->{'version'}");
+		common::debug($debug, "packet::parse() : Cant decode version $data->{'version'}");
 		return(0);
 	}
 
@@ -98,7 +110,7 @@ sub parse {
 		return($data);					
 	}
 								# if we get this far, we failed to parse it
-	debug(5, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
+	common::debug($debug, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
 }
 
 
@@ -108,7 +120,7 @@ sub parse {
 #
 sub generate {
 
-	# TODO: return arrayref of packets less than maxbytes when base64 encoded
+# TODO: return arrayref of packets less than maxbytes when base64 encoded
 	
 	my ($type, $data) = @_;					# type, version, arrayref to binary data
 
@@ -125,7 +137,7 @@ sub generate {
 		$packet .= $element;
 	}
 
-	debug(5, "packet::generate() : " . unpack("H*", $packet));
+	common::debug($debug, "packet::generate() : " . unpack("H*", $packet));
 
 	return($packet);					# assembled packet
 }
@@ -145,17 +157,5 @@ sub base64_length {
 	return( $groups + ($groups % 2) + ($bits % 6) );
 }
 
-#######################################################################################################################################
-#
-# debug
-#
-sub debug {
-
-	my ($level, $message) = @_;
-
-	if ($level <= $debug) {
-		print("$message\n");
-	}
-}
 
 1;	# all packages are true

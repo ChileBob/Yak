@@ -37,7 +37,7 @@ sub keyGen {
 #
 sub decrypt {
 
-	# TODO: Authenticate ciphertext
+# TODO: Authenticate ciphertext
 	
 	my ($key, $input) = @_;
 
@@ -69,7 +69,7 @@ sub decrypt {
 #
 sub encrypt {
 
-	# TODO: Authenticate ciphertext
+# TODO: Authenticate ciphertext
 	
 	my ($key, $plaintext) = @_;						# key is a binary scalar, plaintext is a string
 

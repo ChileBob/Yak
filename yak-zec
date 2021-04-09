@@ -9,7 +9,8 @@
 
 # TODO: Process command line args to overwrite default settings
 # TODO: Confirm zaddr derived from FVK has been imported to the node, otherwise abort
-# TODO: Add pricing/expiry for viewkey monitoring, zats per block seems a good method
+# TODO: Add pricing/expiry for viewkey monitoring to config, zats per block seems a good method
+# TODO: Advertise zaddr & price to clients
 # TODO: Add messaging to clients for when a viewkey is added/removed
 
 # ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
@@ -29,7 +30,6 @@
 
 use ZMQ::FFI qw(ZMQ_SUB);				# ZMQ connection to fullnode
 use Time::HiRes q(usleep);				# ZMQ polling interval timer
-use Data::Dumper;					# debugging output
 use Math::BigInt;					# at some point we need to handle 256-bit ints
 use IO::Socket::INET;					# general purpose networking
 use Protocol::WebSocket::Client;			# websocket client
@@ -43,6 +43,7 @@ use FFI::Platypus::Memory qw( malloc memcpy free);	#
 
 							# ChileBob Packages
 							#
+require './common.pm';					# common subs
 require './bech32.pm';					# bech32 encode/decode 
 require './aes256.pm';					# AES256 encrypt/decrypt
 require './packet.pm';					# yak packet generation/parsing
@@ -61,8 +62,8 @@ my $config = { 						# DEFAULT CONFIGURATION
 	taddr => 1					# ignore transparent txns by default, 1 = monitor, 0 = ignore
 };
 
-#TODO: process command line to over-ride default config
-#TODO: show help, command line args & exit
+# TODO: process command line to over-ride default config
+# TODO: show help, command line args & exit
 
 
 #########################################################################################################################################################################
@@ -90,16 +91,16 @@ $config->{'xfvk'} = xfvk_check($config->{'xfvk'});		# check our registration key
 if ($config->{'xfvk'}) {	
 	push(@viewkey, $config->{'xfvk'});
 	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});	# derive address from xfvk
-	debug(1, "REG: $config->{'addr'}");
+	common::debug(0, "REG: $config->{'addr'}");
 }
 else {								# MUST have a valid registration viewkey
 	print("Registration viewkey is NOT VALID ! Aborting\n");
 	exit(1);
 }
 
-debug(1, "ID : $config->{'client_ident'}");				
+common::debug(0, "ID : $config->{'client_ident'}");		# show connection detail
+common::debug(0, "ZMQ: $config->{'zmq'}");
 
-debug(1, "ZMQ: $config->{'zmq'}");
 my $ctx = ZMQ::FFI->new();					# ZMQ connection
 
 my $zmq_socket = $ctx->socket(ZMQ_SUB);				# ZMQ socket
@@ -114,7 +115,7 @@ my $tcp_socket = IO::Socket::INET->new(				# connect to websocket server (blocki
 );
 
 if (!$tcp_socket) {						# confirm connection
-	debug (1, "WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
+	common::debug (0, "WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
 }
 								# start websocket client
 my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");
@@ -140,11 +141,15 @@ $client->on(							# websocket read method
 		my $client = shift;
 		my ($buf) = @_;
 
-		debug(2, "RX: $buf");
+		common::debug($config->{'debug'}, "RX: $buf");
 
 		if ($buf =~ m/^HELLO/) {			# receive server welcome message
-			debug(1, "Connected to socket server");
+			common::debug($config->{'debug'}, "Connected to socket server");
 		}
+		else {
+# TODO : Parse received packets
+		}
+
 	}
 );
 
@@ -165,7 +170,8 @@ foreach my $txn (@{node_cli("z_listreceivedbyaddress $config->{'addr'}")}) {	# c
 	foreach $line (@line) {		
 		$line =~ s/\0//g;					# strip nulls
 		if (xfvk_check($line)) {				# add if valid
-			push(@viewkey, $line);				# TODO: Prob want to check min value before adding, unless its free :-)
+# TODO: Prob want to check min value before adding, unless its free :-)
+			push(@viewkey, $line);	
 			print "Monitoring : " . xfvk_to_addr($line) . "\n";
 		}
 	}
@@ -179,11 +185,11 @@ while ($running) {
 		my $bytes_read = sysread $tcp_socket, $recv_data, 16384;	# make sure its correct
 	
 		if (!defined $bytes_read) { 
-			debug(0, "Failed to read from network socket");
+			common::debug(0, "Failed to read from network socket, aborting.");
 			exit;
 		}
 		elsif ($bytes_read == 0) { 
-			debug(0, "Websocket connection terminated");
+			common::debug(0, "Websocket connection terminated");
 			exit;
 		}
 	}
@@ -213,7 +219,7 @@ while ($running) {
 			if ($config->{'taddr'} > 0) {										# default is to ignore transparent outputs
 
 				foreach $op (@vout) {
-					debug(3, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+					common::debug($config->{'debug'}, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
 					my $value = pack("H*", sprintf("%016X", $op->{'valueZat'}));				# 8-bytes, valueZat
 					my $addr  = pack("A*", $op->{'scriptPubKey'}->{'addresses'}[0]);			# 35-char taddr
 
@@ -221,7 +227,8 @@ while ($running) {
 				}
 
 				if ( (scalar @data > 1) && $tcp_socket ){							# send transparent outputs, if we have any and connection is up
-					$client->write(encode_base64(packet::generate(0, \@data)));				# TODO: packet::generate changing to return arrayref of packets
+# TODO: packet::generate() : change to use arrayref of packets
+					$client->write(encode_base64(packet::generate(0, \@data)));				# broadcast
 				}
 			}
 	
@@ -243,15 +250,16 @@ while ($running) {
 
 								$line = xfvk_check($line);					# is it a valid ExtendedFullViewingKey ?
 								if ($line) {
-									debug(2, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . hex(unpack("H*", $result->{'value'})));
-									push(@viewkey, $line);					# TODO: Prob want to check min value before adding, unless its free :-)
+									common::debug($common->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . hex(unpack("H*", $result->{'value'})));
+# TODO: Prob want to check min value before adding, unless zaddr monitoring is free :-)
+									push(@viewkey, $line);					# add viewkey to monitored array
 									last MEMOLINE;						# we have what we need, skip remaining memo lines
 								}
 							}
 						}
 						else {										# monitored viewkey
 
-							debug(2, "******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
+							common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
 
 							push @data, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	# re-encrypt using viewkey
 						}
@@ -261,7 +269,8 @@ while ($running) {
 			}
 
 			if ( (scalar @data > 1) && $tcp_socket) {								# send shielded outputs, if we have any and are connected
-				$client->write(encode_base64(packet::generate(1, \@data)));					# TODO: packet::generate changing to return arrayref of packets
+# TODO: packet::generate() : changing to use arrayref of packets
+				$client->write(encode_base64(packet::generate(1, \@data)));					# broadcast
 			}
 		}
 	
@@ -273,7 +282,7 @@ while ($running) {
 			$packet .= pack("L", scalar @{$block->{'tx'}});								# 32-bit, count of txids
 	
 			foreach my $txid (@{$block->{'tx'}}) {									# 32-bytes each, txids mined in this block
-				debug(2, "Confirming: $txid");
+				common::debug($config->{'debug'}, "Confirming: $txid");
 				$packet .= pack("H*",$txid);									#
 			}
 	
@@ -284,31 +293,17 @@ while ($running) {
 	}	
 	else {									# timeout, so check node is still up or abort
 
-		# TODO: Should send a heartbeat message so clients of this node know its up
+# TODO: Should send a heartbeat/announcement so clients know the node is up
 		
-		debug(5, "checking node is running...");
+		common::debug($config->{'debug'}, "checking node...");
 		$info  = node_cli('getblockchaininfo', '', 'abort');
 	}
 	$timeout = $timeout_reset;						# node is OK, reset timeout
 }
 
-debug(0, "exit...");
+common::debug(0, "Bye!");
 
 exit;
-
-
-#########################################################################################################################################################################
-#
-# debugging
-#
-sub debug {
-
-	my ($level, $message) = @_;
-	
-	if ($level <= $config->{'debug'}) { 				# TODO : Send to logfile ? Maybe not (privacy!)
-		print "$message\n";
-	}
-}
 
 
 #############################################################################################################################################################################
@@ -343,7 +338,7 @@ sub node_cli {
 
 # Derive incoming viewkey from extended full viewkey
 #
-# TODO: Should accept *any* flavour of viewkey and return IVK
+# TODO: IVK support ?
 #
 sub xfvk_to_ivk {
 
@@ -447,11 +442,11 @@ sub xfvk_check {
 	$xfvk_str =~ s/\s//g;				# strip whitespace
 
 	if (index($xfvk_str, 'zxviews') != 0) {
-#		debug("xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\', received \'$xfvk_str\'");
+		common::debug($config->{'debug'}, "xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\', received \'$xfvk_str\'");
 		return(0);
 	}
 	elsif (length($xfvk_str) < 285) {			
-#		debug("xfvk_to_addr() : full viewkey too short, expected 285 chars, received " . length($xfvk_str) . " bytes" . "\n");
+		common::debug($config->{'debug'}, "xfvk_to_addr() : full viewkey too short, expected 285 chars, received " . length($xfvk_str) . " bytes" . "\n");
 		return(0);
 	}
 
