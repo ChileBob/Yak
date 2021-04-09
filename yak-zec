@@ -9,8 +9,6 @@
 
 # TODO: Process command line args to overwrite default settings
 # TODO: Confirm zaddr derived from FVK has been imported to the node, otherwise abort
-# TODO: Add pricing/expiry for viewkey monitoring to config, zats per block seems a good method
-# TODO: Advertise zaddr & price to clients
 # TODO: Add messaging to clients for when a viewkey is added/removed
 
 # ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
@@ -50,6 +48,10 @@ require './packet.pm';					# yak packet generation/parsing
 
 my $config = { 						# DEFAULT CONFIGURATION
 
+	nodename => 'ChileBobs Yak Node (Zcash)',	# name of this node for announcements
+	price => 1000,					# price per block for monitoring a viewkey (zats)
+	timer_reset => 6000,				# interval reset value (60 seconds)
+	timer_count => 0,				# interval timer live count
 	client_ident => aes256::keyRandom(32,'A'),	# client ident, randomised
 	debug => 5,					# debugging output level
 	node_client => 'zcash-cli',			# fullnode client binary
@@ -58,8 +60,7 @@ my $config = { 						# DEFAULT CONFIGURATION
 	web_addr => '127.0.0.1',			#
 	web_port => 8834,				#
 	librust => '/home/bob/github/zcash/target/debug/librustzcash.so',		# path to librustzcash.so (dynamic library built from librustzcash)
-	xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn',
-	taddr => 1					# ignore transparent txns by default, 1 = monitor, 0 = ignore
+	xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn'
 };
 
 # TODO: process command line to over-ride default config
@@ -73,9 +74,6 @@ my $config = { 						# DEFAULT CONFIGURATION
 #########################################################################################################################################################################
 
 my $running = 1;						# running flag
-
-my $timeout_reset = 3000;					# timeout counter (30 seconds)
-my $timeout = $timeout_reset;
 
 my $ffi = FFI::Platypus->new( api => 1);												# FFI to librustzcash
 $ffi->lib( $config->{'librust'} );													# load library
@@ -144,10 +142,12 @@ $client->on(							# websocket read method
 		common::debug($config->{'debug'}, "RX: $buf");
 
 		if ($buf =~ m/^HELLO/) {			# receive server welcome message
-			common::debug($config->{'debug'}, "Connected to socket server");
+			common::debug($config->{'debug'}, "Connected!");
 		}
 		else {
-# TODO : Parse received packets
+			common::debug($config->{'debug'}, unpack("H*", $buf));
+
+# TODO: Parse received packets
 		}
 
 	}
@@ -170,13 +170,12 @@ foreach my $txn (@{node_cli("z_listreceivedbyaddress $config->{'addr'}")}) {	# c
 	foreach $line (@line) {		
 		$line =~ s/\0//g;					# strip nulls
 		if (xfvk_check($line)) {				# add if valid
-# TODO: Prob want to check min value before adding, unless its free :-)
+# TODO: Check if monitoring period has expired for xfvk before adding 
 			push(@viewkey, $line);	
 			print "Monitoring : " . xfvk_to_addr($line) . "\n";
 		}
 	}
 }
-
 
 while ($running) {
 	if ($tcp_socket) {						# listen to websocket server (if connected)
@@ -192,18 +191,43 @@ while ($running) {
 			common::debug(0, "Websocket connection terminated");
 			exit;
 		}
+		$client->read($recv_data);
 	}
 
-	$timeout = $timeout_reset;
-
-	until ($zmq_socket->has_pollin || ($timeout == 0) ) {			# wait until zmq says something
+	until ($zmq_socket->has_pollin) {			# wait until zmq says something
 		usleep 100_00;
-		$timeout--;
+
+
+		$config->{'timer_count'}--;					# interval timer
+
+		if ($config->{'timer_count'} <= 0) {	
+
+			$config->{'timer_count'} = $config->{'timer_reset'};
+
+			my @announce = ( 					# generate announcement
+				pack("L", $config->{'price'}), 
+				pack("A78", $config->{'addr'}), 
+			);
+
+			common::debug($config->{'debug'}, "checking node...");	# check node status
+			$info  = node_cli('getblockchaininfo', '', '');
+
+			if ($info) {						# append node status
+				push @announce, pack("C", 1);
+			}
+			else {
+				push @announce, pack("C", 0);
+			}
+			push @announce, pack("a512", $config->{'nodename'});	# append node name
+
+			if ($tcp_socket) {					# send if connected
+				my $raw = packet::generate(0x03, \@announce, '');
+				$client->write(encode_base64(packet::generate(0x03, \@announce, '')));
+			}
+		}
 	}
 
 	if ($zmq_socket->has_pollin) {
-
-		$timeout = $timeout_reset;											# reset timeout counter;
 
 		my @zmq_parts = $zmq_socket->recv_multipart();									# read ZMQ
 
@@ -216,20 +240,19 @@ while ($running) {
 
 			my @data = ( pack("H*", $txn->{'txid'}) );								# 32-bytes, txid is the first record
 	
-			if ($config->{'taddr'} > 0) {										# default is to ignore transparent outputs
 
-				foreach $op (@vout) {
-					common::debug($config->{'debug'}, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
-					my $value = pack("H*", sprintf("%016X", $op->{'valueZat'}));				# 8-bytes, valueZat
-					my $addr  = pack("A*", $op->{'scriptPubKey'}->{'addresses'}[0]);			# 35-char taddr
+			foreach $op (@vout) {
+				common::debug($config->{'debug'}, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
 
-					push @data, ("$value$addr");
-				}
+				my $value = pack("H*", sprintf("%016X", $op->{'valueZat'}));				# 8-bytes, valueZat
+				my $addr  = pack("A*", $op->{'scriptPubKey'}->{'addresses'}[0]);			# 35-char taddr
 
-				if ( (scalar @data > 1) && $tcp_socket ){							# send transparent outputs, if we have any and connection is up
+				push @data, ("$value$addr");
+			}
+
+			if ( (scalar @data > 1) && $tcp_socket ){							# send transparent outputs, if we have any and connection is up
 # TODO: packet::generate() : change to use arrayref of packets
-					$client->write(encode_base64(packet::generate(0, \@data)));				# broadcast
-				}
+				$client->write(encode_base64(packet::generate(0, \@data)));				# broadcast
 			}
 	
 			@data = ( pack("H*", $txn->{'txid'}) );									# 32-bytes, txid is the first record
@@ -291,14 +314,6 @@ while ($running) {
 			}
 		}
 	}	
-	else {									# timeout, so check node is still up or abort
-
-# TODO: Should send a heartbeat/announcement so clients know the node is up
-		
-		common::debug($config->{'debug'}, "checking node...");
-		$info  = node_cli('getblockchaininfo', '', 'abort');
-	}
-	$timeout = $timeout_reset;						# node is OK, reset timeout
 }
 
 common::debug(0, "Bye!");

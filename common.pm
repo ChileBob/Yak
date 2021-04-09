@@ -9,16 +9,20 @@
 
 package common;
 
+my $debug = 1;			# global debug verbosity, 0 = quiet
+
 #########################################################################################################################################################################
 #
 # debugging output
 #
 sub debug {
 
-# TODO : Send to logfile ? Maybe not (privacy!)
+# TODO: Send to logfile ? Maybe not (privacy!)
+# TODO: Include sub name in debug messages
+	
 	my ($level, $message) = @_;
 	
-	if ($level <= $config->{'debug'}) { 
+	if ($level < $debug) { 
 		print "$message\n";
 	}
 }

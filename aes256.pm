@@ -7,7 +7,7 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-# TODO : Ciphertext is NOT authenticated, it should be !
+# TODO: Ciphertext is NOT authenticated, it should be !
 # - authentication key should be sha(zaddr) derived from xfvk, only the node & client know
 
 package aes256;
@@ -37,8 +37,6 @@ sub keyGen {
 #
 sub decrypt {
 
-# TODO: Authenticate ciphertext
-	
 	my ($key, $input) = @_;
 
 	my $inputHEX = unpack("H*", $input);					# convert binary scalar input to hex-encoded string
@@ -69,8 +67,6 @@ sub decrypt {
 #
 sub encrypt {
 
-# TODO: Authenticate ciphertext
-	
 	my ($key, $plaintext) = @_;						# key is a binary scalar, plaintext is a string
 
 	$iv  = pack("H*", keyRandom(32));					# generate random init vector (32 hex chars, packs to 128-bit)
