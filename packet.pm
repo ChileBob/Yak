@@ -65,8 +65,8 @@ sub parse {
 
 		for ($i = 0; $i < unpack("L", substr($packet,2,4)); $i++) { 		
 			push @item, { 
-				value => hex(reverse unpack("H*", substr($packet, (($i*43)+38), 8))),	
-				addr =>  unpack("A35",    substr($packet, (($i*43)+46), 35))
+				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
+				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35))
 			};
 		}
 		$data->{'output'} = \@item;	
@@ -109,15 +109,17 @@ sub generate {
 
 	my $packet = pack("C1", $type) . pack("C1", $version);	# header
 
-	my $count = @{$data}; 					# count of data items
+	my $count = scalar @{$data}; 				# count of data items
 	if ($type < 2) {					# transaction notifications have txid as first data item (32-bytes)
 		$count--;
 	}
 	$packet .= pack("L", $count);	 			# append item counter
 
 	foreach my $element (@{$data}) {			# append data 
+
 		$packet .= $element;
 	}
+
 	return($packet);					# assembled packet
 }
 

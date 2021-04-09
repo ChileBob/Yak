@@ -14,6 +14,10 @@
 
 # ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
 # ISSUE: The payment address cannot be derived from an IVK, so maybe not.
+#
+# BUG: Large transactions can exceed the max websocket limits
+# - break into sections
+# - add sections to outbound spool
 
 #########################################################################################################################################################################
 #
@@ -41,6 +45,7 @@ use FFI::Platypus::Memory qw( malloc memcpy free);	#
 							#
 require './bech32.pm';					# bech32 encode/decode 
 require './aes256.pm';					# AES256 encrypt/decrypt
+require './packet.pm';					# yak packet generation/parsing
 
 my $config = { 						# DEFAULT CONFIGURATION
 
@@ -68,7 +73,7 @@ my $config = { 						# DEFAULT CONFIGURATION
 
 my $running = 1;						# running flag
 
-my $timeout_reset = 1000;					# timeout counter (10 seconds)
+my $timeout_reset = 3000;					# timeout counter (30 seconds)
 my $timeout = $timeout_reset;
 
 my $ffi = FFI::Platypus->new( api => 1);												# FFI to librustzcash
@@ -201,25 +206,29 @@ while ($running) {
 
 			my @vout            = @{$txn->{'vout'}};								# array of transparent outputs
 			my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};							# shielded outputs
-	
-			my $packet = pack("H*", '0000');									# websocket packet, type 0x00, version 0x00
-			$packet .= pack("H*", $txn->{'txid'});									# 32-bytes, txid
+
+			my @data = ();
+			push @data, pack("H*", $txn->{'txid'});									# 32-bytes, txid is the first record
 	
 			if ($config->{'taddr'} > 0) {										# default is to ignore transparent outputs
 
-				$packet .= pack("L", scalar @vout);								# 32-bit, count of transparent outputs
 				foreach $op (@vout) {
 					debug(3, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
-					$packet .= pack("H*", sprintf("%016s", substr(Math::BigInt->new($op->{'valueZat'})->as_hex(), 2)));	# 8-bytes, valueZat
-					$packet .= pack("A35", $op->{'scriptPubKey'}->{'addresses'}[0]);					# 25-bytes, taddr
+					my $value = pack("H*", sprintf("%016X", $op->{'valueZat'}));				# 8-bytes, valueZat
+					my $addr  = pack("A*", $op->{'scriptPubKey'}->{'addresses'}[0]);			# 35-char taddr
+
+					if (scalar @data < 10) {								# limit to 10 txns
+						push @data, ("$value$addr");
+					}
+				}
+
+				if ( (scalar @data > 1) && $tcp_socket ){					# send transparent outputs, if we have any and connection is up
+					$client->write(encode_base64(packet::generate(0, \@data)));
 				}
 			}
-			else {													# we're ignoring transparent, set to zero
-				$packet .= pack("L", 0);
-			}
 	
-			my $shielded_count = 0;											# count of shielded outputs !
-			my $shielded_data = '';											# ciphertext, we re-encrypt before sending
+			@data = ();												# clear output data array
+			push @data, pack("H*", $txn->{'txid'});									# 32-bytes, txid is the first record
 	
 			OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {						# loop through all shielded outputs
 	
@@ -247,18 +256,15 @@ while ($running) {
 
 							debug(2, "******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
 
-							$shielded_count++;											# add shielded output
-							$shielded_data .= aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	# re-encrypt using viewkey
+							push @data, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	# re-encrypt using viewkey
 						}
 						last VIEWKEY;									# no need to try remaining keys, we're done!
 					}
 				}
 			}
-			$packet .= pack("L", $shielded_count);									# (4-bytes), count of decoded shielded outputs
-			$packet .= $shielded_data; 										# (544-bytes * count),  append shielded outputs
-	
-			if ($tcp_socket) {											# send to websocket server (if connected)
-				$client->write(encode_base64($packet));		
+
+			if ( (scalar @data > 1) && $tcp_socket) {								# send shielded outputs, if we have any and are connected
+				$client->write(encode_base64(packet::generate(0, \@data)));	
 			}
 		}
 	
@@ -280,6 +286,9 @@ while ($running) {
 		}
 	}	
 	else {									# timeout, so check node is still up or abort
+
+		# TODO: Should send a heartbeat message so clients of this node know its up
+		
 		debug(5, "checking node is running...");
 		$info  = node_cli('getblockchaininfo', '', 'abort');
 	}

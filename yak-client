@@ -8,6 +8,7 @@
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
 use Data::Dumper;					# debugging output
+use Time::HiRes q(usleep);				# high res timer
 use IO::Socket::INET;					# general purpose networking
 use Protocol::WebSocket::Client;			# websocket client
 use Convert::Base64;					# transport encoding for perl clients
@@ -29,7 +30,6 @@ my $config = { 						# DEFAULT CONFIGURATION
 
 #TODO: process command line to over-ride default config
 #TODO: show help, command line args & exit
-
 
 #########################################################################################################################################################################
 #
@@ -72,13 +72,17 @@ $client->on(							# websocket read method
 		my $client = shift;
 		my ($buf) = @_;
 
+		print "receiving...\n";
+
 		if ($buf =~ m/^HELLO/) {			# parse received messages
 			debug(1, "Connected!");
 		}
 		else {
-			print "wasnt a hello !\n";
-		}
 
+			my $packet = packet::parse(decode_base64($buf));	
+
+			print Dumper $packet;
+		}
 	}
 );
 
@@ -103,6 +107,7 @@ while ($running) {
 		}
 		$client->read($recv_data); 				# this is where we parse what we read....
 	}
+	usleep 100_00;							# lets not beat up the server, take a nap
 }
 
 debug(0, "exit...");
