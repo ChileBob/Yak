@@ -129,6 +129,7 @@ $client->on(
 	write => sub {						# websocket write method
 		my $client = shift;
 		my ($buf) = @_;
+
 		syswrite $tcp_socket, $buf;
 		usleep 100_00;	
 	}
@@ -207,8 +208,7 @@ while ($running) {
 			my @vout            = @{$txn->{'vout'}};								# array of transparent outputs
 			my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};							# shielded outputs
 
-			my @data = ();
-			push @data, pack("H*", $txn->{'txid'});									# 32-bytes, txid is the first record
+			my @data = ( pack("H*", $txn->{'txid'}) );								# 32-bytes, txid is the first record
 	
 			if ($config->{'taddr'} > 0) {										# default is to ignore transparent outputs
 
@@ -222,13 +222,12 @@ while ($running) {
 					}
 				}
 
-				if ( (scalar @data > 1) && $tcp_socket ){					# send transparent outputs, if we have any and connection is up
+				if ( (scalar @data > 1) && $tcp_socket ){							# send transparent outputs, if we have any and connection is up
 					$client->write(encode_base64(packet::generate(0, \@data)));
 				}
 			}
 	
-			@data = ();												# clear output data array
-			push @data, pack("H*", $txn->{'txid'});									# 32-bytes, txid is the first record
+			@data = ( pack("H*", $txn->{'txid'}) );									# 32-bytes, txid is the first record
 	
 			OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {						# loop through all shielded outputs
 	
@@ -264,7 +263,7 @@ while ($running) {
 			}
 
 			if ( (scalar @data > 1) && $tcp_socket) {								# send shielded outputs, if we have any and are connected
-				$client->write(encode_base64(packet::generate(0, \@data)));	
+				$client->write(encode_base64(packet::generate(1, \@data)));	
 			}
 		}
 	

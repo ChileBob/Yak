@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# yak-zec : packet parsing
+# yak-zec : packet generation & parsing
 #
 # MIT License (ChileBob)
 #
@@ -9,7 +9,7 @@
 
 package packet;
 
-use Data::Dumper;
+require './aes256.pm';			# we're going to decrypt things
 
 # TRANSPARENT TRANSCTION NOTIFICATION
 #
@@ -44,20 +44,22 @@ my $debug   = 5;						# debug verbosity
 #
 sub parse {
 
-	my ($packet) = @_;					# binary packet data
+	my ($packet, $xfvk) = @_;				# binary packet data, bech32 encoded xfvk
 
 	my $data;						# hash of update
 	my @item;						# array of objects
 
 	use bytes;
 
-	$data->{'type'}    = unpack("C", substr($packet,0,1));
-	$data->{'version'} = unpack("C", substr($packet,1,1));
+	debug(5, "packet::parse() : " . unpack("H*", $packet));
 
-	if ($data->{'version'} != $version) {
+	if (unpack("C", substr($packet, 1, 1)) != $version) {	# version check
+
 		debug(5, "packet::parse() : Cant decode version $data->{'version'}");
 		return(0);
 	}
+
+	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
 	if ($data->{'type'} == 0) {				# TRANSPARENT TRANSACTIONS
 
@@ -75,13 +77,15 @@ sub parse {
 
 	elsif ($data->{'type'} == 1) {				# SHEILDED TRANSACTIONS
 
-		$data->{'txid'} = unpack("H64", substr($packet,6,32));  # get txid (32-bytes)
+		my $key = aes256::keyGen($xfvk);		# generate AES256 key from viewkey
 
-		for ($i = 0; $i < unpack("L", substr($packet,2,4)); $i++) { 		# ciphertext	
-			push @item, { ciphertext => substr($packet, (($i*544)+38), 544) };
+		$data->{'txid'} = unpack("H64", substr($packet,6,32));  	# get txid
+
+		for ($i = 0; $i < unpack("L", substr($packet,2,4)); $i++) { 	# ciphertext
+			push @item, substr($packet, (($i*544)+38), 544);
 		}
 
-		$data->{'output'} = \@item;			
+		$data->{'ciphertext'} = \@item;			
 		return($data);				
 	}
 
@@ -119,6 +123,8 @@ sub generate {
 
 		$packet .= $element;
 	}
+
+	debug(5, "packet::generate() : " . unpack("H*", $packet));
 
 	return($packet);					# assembled packet
 }

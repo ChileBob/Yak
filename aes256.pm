@@ -7,12 +7,14 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
+# TODO : Ciphertext is NOT authenticated, it should be !
+# - authentication key should be sha(zaddr) derived from xfvk, only the node & client know
+
 package aes256;
 
 use Crypt::CBC;						# encryption mode
 use Crypt::Cipher::AES;					# AES256 encryption algo
 use Digest::SHA qw(sha256);				# sha hashing strings to create keys
-
 
 #######################################################################################################################################
 #
