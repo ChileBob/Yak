@@ -34,9 +34,8 @@ require './aes256.pm';			# we're going to decrypt things
 #	<txid count>	uint32										(number of txids)
 #	<txid data>	<count * 32-bytes>								(txids)
 
-
 my $version = 1;						# packet type version number
-my $debug   = 5;						# debug verbosity
+my $debug   = 0;						# debug verbosity
 
 #######################################################################################################################################
 #
@@ -109,6 +108,8 @@ sub parse {
 #
 sub generate {
 
+	# TODO: return arrayref of packets less than maxbytes when base64 encoded
+	
 	my ($type, $data) = @_;					# type, version, arrayref to binary data
 
 	my $packet = pack("C1", $type) . pack("C1", $version);	# header
@@ -129,6 +130,20 @@ sub generate {
 	return($packet);					# assembled packet
 }
 
+
+#######################################################################################################################################
+#
+# calculate length of base64 encoded data
+#
+sub base64_length {
+
+	use integer;
+
+	my $bits = length($_[0]) * 8;
+	my $groups = $bits / 6;
+
+	return( $groups + ($groups % 2) + ($bits % 6) );
+}
 
 #######################################################################################################################################
 #

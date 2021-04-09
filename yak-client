@@ -33,22 +33,22 @@ my $config = { 						# DEFAULT CONFIGURATION
 
 my $testxfvk = 'zxviews1qwmpy5zhqsqqpqyv8h7n8jjumltlmjwl2hyc8nlk0k2nn4wn2926vj8rhum0d47kq354392kfg4vl4rdcsnnywsxr7j75uqcg8zyaa0v3xx9tgzz4whtfwspw0hnga6mcuslwhwzdz697259z4lqepu7z06wm5szkghuxtsscepks0ya9gs0yur3lsuxs26j5dej2rxqz9qjgk2ds0j45mt6zwx0pzd46ptn3yy5dstz8nv24wql8lwxl5w277nu66vumxutzpa98lq80xkcw';
 
-my $testtxn = pack("H*", '010101000000a0564d27621b819eba65ce42ddb5c25f4be384e6255e67f40d385f58e75ff201ccf5a6ca6076f4fea696e90dbaf8d348e7c18e79aa1d81514ace862c640678d135a86706acf7326365e0b5435b455b51582d6b3acedf5fb5d29415df43786c7567fbf2954ee30fe81876fe730a9388ab658fa61a47c3804cb8af2f4a0f3266508d29c351da15eaf80d789eec6f96c5a94e37e8fff11beedcbabedcfaed5edb3944c22316216da65999438ad9b24aa6e916d4bba4103f373422ec9b929478fb092402727f811fc0e72593b9fed695e3c97d3f39d4a864ae8eae77619d564b30b760b11aa3aa7d51387a42e0cfa8bc19b592036176553f85dec3bfcbc33c875a66d802eb0a17c8e7bb1c65e5dc503a4cd9fdc4ae09611de1210c73c8f53044e540faaa8c249924dc7b614a225f26a636b2d4de96ea2ed9147ad3aa3e2d2769cec0a085f044b8522b89db4e055e0fe6823bf12c5bfd9edb3d552b39611d43c3675919e804a0fd85b08259836aa3c876cdd9395b3958d6066c13479b12ebce5a40538d0d1f1e5e7d1d7f0c27671c29dacd622457b67ad88ea5aba894884cab224cc8f98162d3b9920d7ac6235c6eab50afbc5acb0c80800a2c9da9e9e2c4edfaf245dbcb0a84cbdd5fbd8a9a8327818ed3902f862e75fbe6ef61f9637bcfad345a6b7de54c45149127fa88c53411140d243ab83d6c5350619a92c671f96cec14877eecf24d8a7bd9ebc38bb7b56bc1b623b5561c7aa52a8e2ae63d077cdc2a96456bf26c1429684f94142bac4045682f4e2e2a81c399b4dae7421078dc42e692f7ee');
-
-my $packet = packet::parse($testtxn);
-
-foreach my $cipher (@{$packet->{'ciphertext'}}) {
-	my $plaintext = aes256::decrypt(aes256::keyGen($testxfvk), $cipher);
-
-	my $value = hex(unpack("H*", substr($plaintext, 0, 8)));	# get transaction value
-	print "value = $value\n";
-
-	my $memo  = unpack("A*", substr($plaintext, 8));		# get memo
-	$memo =~ s/\0//g;						# strip null padding
-	print "memo = $memo\n";
-}
-
-exit;
+#my $testtxn = pack("H*", '010101000000a0564d27621b819eba65ce42ddb5c25f4be384e6255e67f40d385f58e75ff201ccf5a6ca6076f4fea696e90dbaf8d348e7c18e79aa1d81514ace862c640678d135a86706acf7326365e0b5435b455b51582d6b3acedf5fb5d29415df43786c7567fbf2954ee30fe81876fe730a9388ab658fa61a47c3804cb8af2f4a0f3266508d29c351da15eaf80d789eec6f96c5a94e37e8fff11beedcbabedcfaed5edb3944c22316216da65999438ad9b24aa6e916d4bba4103f373422ec9b929478fb092402727f811fc0e72593b9fed695e3c97d3f39d4a864ae8eae77619d564b30b760b11aa3aa7d51387a42e0cfa8bc19b592036176553f85dec3bfcbc33c875a66d802eb0a17c8e7bb1c65e5dc503a4cd9fdc4ae09611de1210c73c8f53044e540faaa8c249924dc7b614a225f26a636b2d4de96ea2ed9147ad3aa3e2d2769cec0a085f044b8522b89db4e055e0fe6823bf12c5bfd9edb3d552b39611d43c3675919e804a0fd85b08259836aa3c876cdd9395b3958d6066c13479b12ebce5a40538d0d1f1e5e7d1d7f0c27671c29dacd622457b67ad88ea5aba894884cab224cc8f98162d3b9920d7ac6235c6eab50afbc5acb0c80800a2c9da9e9e2c4edfaf245dbcb0a84cbdd5fbd8a9a8327818ed3902f862e75fbe6ef61f9637bcfad345a6b7de54c45149127fa88c53411140d243ab83d6c5350619a92c671f96cec14877eecf24d8a7bd9ebc38bb7b56bc1b623b5561c7aa52a8e2ae63d077cdc2a96456bf26c1429684f94142bac4045682f4e2e2a81c399b4dae7421078dc42e692f7ee');
+#
+#my $packet = packet::parse($testtxn);
+#
+#foreach my $cipher (@{$packet->{'ciphertext'}}) {
+#	my $plaintext = aes256::decrypt(aes256::keyGen($testxfvk), $cipher);
+#
+#	my $value = hex(unpack("H*", substr($plaintext, 0, 8)));	# get transaction value
+#	print "value = $value\n";
+#
+#	my $memo  = unpack("A*", substr($plaintext, 8));		# get memo
+#	$memo =~ s/\0//g;						# strip null padding
+#	print "memo = $memo\n";
+#}
+#
+#exit;
 
 
 #########################################################################################################################################################################
@@ -91,8 +91,6 @@ $client->on(							# websocket read method
 	read => sub {
 		my $client = shift;
 		my ($buf) = @_;
-
-		print "receiving...\n";
 
 		if ($buf =~ m/^HELLO/) {			# parse received messages
 			debug(1, "Connected!");

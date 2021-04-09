@@ -217,13 +217,11 @@ while ($running) {
 					my $value = pack("H*", sprintf("%016X", $op->{'valueZat'}));				# 8-bytes, valueZat
 					my $addr  = pack("A*", $op->{'scriptPubKey'}->{'addresses'}[0]);			# 35-char taddr
 
-					if (scalar @data < 10) {								# limit to 10 txns
-						push @data, ("$value$addr");
-					}
+					push @data, ("$value$addr");
 				}
 
 				if ( (scalar @data > 1) && $tcp_socket ){							# send transparent outputs, if we have any and connection is up
-					$client->write(encode_base64(packet::generate(0, \@data)));
+					$client->write(encode_base64(packet::generate(0, \@data)));				# TODO: packet::generate changing to return arrayref of packets
 				}
 			}
 	
@@ -263,7 +261,7 @@ while ($running) {
 			}
 
 			if ( (scalar @data > 1) && $tcp_socket) {								# send shielded outputs, if we have any and are connected
-				$client->write(encode_base64(packet::generate(1, \@data)));	
+				$client->write(encode_base64(packet::generate(1, \@data)));					# TODO: packet::generate changing to return arrayref of packets
 			}
 		}
 	

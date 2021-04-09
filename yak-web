@@ -15,6 +15,12 @@ my $config = {						# default configuration
 	debug => 1
 };
 
+# TODO: cache transparent txns, confirmations & announcements, lets clients query directly & catch up
+# TODO: spam prevention, rate limit client sending
+# TODO: spam prevention, disconnect & block
+# TODO: spam prevention, authenication for connecting nodes
+# TODO: whale watching, on tick events send the largest transparent output seen in the last hour
+
 ###################################################################################################################################################
 #
 # CHANGING STUFF BELOW THIS LINE IS A BAD IDEA
@@ -26,7 +32,7 @@ use Net::WebSocket::Server;				# websocket server
 use Convert::Base64;					# base64 encode/decode
 use Data::Dumper;					# debugging output
 
-my %transport;						# transport encoding for each connection (BINARY, BASE64, HEX)
+my %transport;						# transport encoding for each connection (BINARY, BASE64)
 my %clientkey;						# client keys
 
 $SIG{INT} = \&server_shutdown;				# graceful shutdown (not implemented)
@@ -63,7 +69,7 @@ Net::WebSocket::Server->new(				# websocket server
 
 				my ($conn, $msg) = @_;	
 
-				if ( $msg =~ m/^BINARY/ || $msg =~ m/^HEX/ || $msg =~ m/^BASE64/) {	# client subscription
+				if ( $msg =~ m/^BINARY/ || $msg =~ m/^BASE64/) {			# client subscription
 
 					($transport->{$conn}, $clientkey->{$conn}) = split(':', $msg);	# store connection type and client key
 
@@ -80,12 +86,7 @@ Net::WebSocket::Server->new(				# websocket server
 						$msg_binary = decode_base64($msg);				
 					}								
 
-					elsif ($transport->{$conn} eq 'HEX') {				# convert from hexstring if required
-						$msg_binary = pack("H*", $msg);	
-					}
-
 					foreach ($serv->connections) {					# broadcast to all clients
-
 						writeClient($_, $msg_binary);
 					}
 				}
@@ -137,11 +138,6 @@ sub writeClient {
 	elsif ($transport->{$conn} eq 'BASE64') {			# perl clients as their binary method is borked
 		$conn->send_utf8(encode_base64($binary));
 		debug(5, "writeClient() : BASE64");
-	}
-
-	elsif ($transport->{$conn} eq 'HEX') {				# nice for debugging but not really useful
-		$conn->send_utf8(unpack("H*", $binary));
-		debug(5, "writeClient() : HEX");
 	}
 }
 
