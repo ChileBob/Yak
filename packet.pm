@@ -41,7 +41,7 @@ require './aes256.pm';			# AES encrypt/decrypt
 #
 #	<type>		u8										('0x03' : type, node service announcement)
 #	<version>	u8										('0x01' : version)
-#	<price>		uint32										(price per block, in zats)
+#	<fee>		uint32										(fee per block, in zats)
 #	<zaddr>		<78-bytes>									(node registration zaddr)
 #	<status>	u8										(node stats, 1 = up)
 #	<message>	<512-bytes>									(ascii text, null padded)
@@ -127,7 +127,7 @@ sub parse {
 
 	elsif ($data->{'type'} == 3) {				# NODE ANNOUNCEMENT
 
-		$data->{'price'}   = unpack("L", substr($packet,2,4));		# price (per block)
+		$data->{'fee'}     = unpack("L", substr($packet,2,4));		# monitoring fee (per block)
 		$data->{'address'} = unpack("A78", substr($packet,6,78));	# registration address
 		$data->{'status'}  = unpack("C", substr($packet,84,1));		# node status
 		$data->{'message'} = unpack("A512", substr($packet,85,512));	# text from node

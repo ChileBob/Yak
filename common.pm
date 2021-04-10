@@ -26,5 +26,20 @@ sub debug {
 	}
 }
 
+#########################################################################################################################################################################
+#
+# split URI into seperate components
+#
+sub uri_split {
+
+	my ($uri) = @_;
+
+	$uri =~ s/\///g;		# remove '/'
+	my @parts = split(":",$uri);
+
+	return(@parts);
+}
+
+
 1;	# all packages are true, especially the ones that are not
 

@@ -2,7 +2,7 @@
 
 # yak-web
 #
-# Websocket echo server for use with yec-yak, zec-yak, yak-yak and other yak clients.
+# Websocket echo server for use with yak-zec, yak-yec, yak-yak, yak-client and friends.
 #
 # MIT License (ChileBob)
 #
@@ -15,7 +15,7 @@ my $config = {						# default configuration
 	debug => 1
 };
 
-# TODO: cache transparent txns, confirmations & announcements, lets clients query directly & catch up
+# TODO: cache transparent txns, confirmations & announcements, allows clients to catch up
 # TODO: spam prevention, rate limit client sending
 # TODO: spam prevention, disconnect & block
 # TODO: spam prevention, authenication for connecting nodes
@@ -30,11 +30,14 @@ my $config = {						# default configuration
 use utf8;
 use Net::WebSocket::Server;				# websocket server
 use Convert::Base64;					# base64 encode/decode
+use Digest::SHA qw(sha256);				# sha hashing for network packets
 
 require './common.pm';					# common subs
 
 my %transport;						# transport encoding for each connection (BINARY, BASE64)
 my %clientkey;						# client keys
+
+my @tracker;						# hash of packets sent, prevents duplicates
 
 $SIG{INT} = \&server_shutdown;				# graceful shutdown (not implemented)
 
@@ -47,7 +50,6 @@ Net::WebSocket::Server->new(				# websocket server
 	on_tick => sub {				##################################################################################################
 
 		common::debug($config->{'debug'}, "tick..");			# timestamp tick/heartbeat
-		
 	},
 
 	on_connect => sub {				##################################################################################################
@@ -60,10 +62,11 @@ Net::WebSocket::Server->new(				# websocket server
 
 				my ($conn, $msg) = @_;
 
-				foreach ($serv->connections) {						# send to all connected clients
-					writeClient($_, $msg);				
+				if (packetTrack($msg) == 1) {						# check packet not a duplicate
+					foreach ($serv->connections) {					# send to all connected clients
+						writeClient($_, $msg);				
+					}
 				}
-
 			},
 													##################################
 			utf8 => sub {									# received text 
@@ -71,11 +74,9 @@ Net::WebSocket::Server->new(				# websocket server
 				my ($conn, $msg) = @_;	
 
 				if ( $msg =~ m/^BINARY/ || $msg =~ m/^BASE64/) {			# client subscription
-
+					
 					($transport->{$conn}, $clientkey->{$conn}) = split(':', $msg);	# store connection type and client key
-
 					$conn->send_utf8("HELLO\n");					# say hi to the client
-
 					common::debug($config->{'debug'}, "Connect : $clientkey->{$conn}");
 				}
 
@@ -84,11 +85,15 @@ Net::WebSocket::Server->new(				# websocket server
 					my $msg_binary = $msg;						# assume client sent binary data
 
 					if ($transport->{$conn} eq 'BASE64') {				# convert from base64 if required
+
 						$msg_binary = decode_base64($msg);				
 					}								
+	
+					if (packetTrack($msg_binary) == 1) {				# check packet not a duplicate
 
-					foreach ($serv->connections) {					# broadcast to all clients
-						writeClient($_, $msg_binary);
+						foreach ($serv->connections) {				# broadcast to all clients
+							writeClient($_, $msg_binary);
+						}
 					}
 				}
 			},
@@ -128,6 +133,27 @@ sub writeClient {
 	elsif ($transport->{$conn} eq 'BASE64') {			# perl clients as their binary method is borked
 		$conn->send_utf8(encode_base64($binary));
 		common::debug($config->{'debug'}, "writeClient() : BASE64");
+	}
+}
+
+
+#############################################################################################################################################################################
+#
+# check if a packet has already been broadcast, otherwise add its hash to the tracker
+#
+sub packetTrack {
+
+	my ($packet) = @_;			# binary packet data 
+
+	my $hash = sha256($packet);		# hash the packet
+
+	if (!grep $_ eq $hash, @tracker) {	# not found, clear to send
+		push @tracker, $hash;
+
+		if (scalar @tracker > 100) {	# dont let the tracker get too big
+			shift @tracker;
+		}
+		return(1);
 	}
 }
 
