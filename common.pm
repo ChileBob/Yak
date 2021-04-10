@@ -17,7 +17,6 @@ my $debug = 1;			# global debug verbosity, 0 = quiet
 #
 sub debug {
 
-# TODO: Send to logfile ? Maybe not (privacy!)
 # TODO: Include sub name in debug messages
 	
 	my ($level, $message) = @_;

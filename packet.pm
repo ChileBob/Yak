@@ -155,8 +155,6 @@ sub generate {
 	my $records = scalar @{$data};				# number of elements
 	my $bytes_body = total_size($data);			# data payload
 
-	print "packet::generate() : raw data length = $bytes_body, encoded data length = " . base64_length($bytes_body) . "\n";
-
 	my $packet = pack("C1", $type) . pack("C1", $version);	# header
 
 	my $count = scalar @{$data}; 				# count of data items

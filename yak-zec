@@ -8,7 +8,6 @@
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
 # TODO: Process command line args to overwrite default settings
-# TODO: Confirm zaddr derived from FVK has been imported to the node, otherwise abort
 # TODO: Add messaging to clients for when a viewkey is added/removed
 
 # ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
@@ -25,6 +24,8 @@
 # - Running ZMQ on a fullnode may compromise its security even if restricted to 127.0.0.1
 #
 #########################################################################################################################################################################
+
+use Data::Dumper;					# debugging
 
 use ZMQ::FFI qw(ZMQ_SUB);				# ZMQ connection to fullnode
 use Time::HiRes q(usleep);				# ZMQ polling interval timer
@@ -49,7 +50,7 @@ require './packet.pm';					# yak packet generation/parsing
 my $config = { 						# DEFAULT CONFIGURATION
 
 	nodename => 'ChileBobs Yak Node (Zcash)',	# name of this node for announcements
-	price => 1000,					# price per block for monitoring a viewkey (zats)
+	price => 10,					# price per block for monitoring a viewkey (zats)
 	timer_reset => 6000,				# interval reset value (60 seconds)
 	timer_count => 0,				# interval timer live count
 	client_ident => aes256::keyRandom(32,'A'),	# client ident, randomised
@@ -63,6 +64,7 @@ my $config = { 						# DEFAULT CONFIGURATION
 	xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn'
 };
 
+# TODO: config for websocket connection should be a URI, not seperate components for protocol/address/port
 # TODO: process command line to over-ride default config
 # TODO: show help, command line args & exit
 
@@ -82,7 +84,8 @@ $ffi->attach( 'librustzcash_xfvk_decrypt_note' => [ 'int', 'string', 'string', '
 $ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque', 'opaque'  ] => 'int'); 				# derive payment address from ExtendedFullViewingKey
 $ffi->attach( 'librustzcash_crh_ivk' => [ 'string', 'string', 'opaque' ] => 'void'); 							# derive ivk from ak & nk
 
-my @viewkey;							# array of ExtendedFullViewingKeys we monitor
+my @viewkey;							# array of ExtendedFullViewingKeys being monitored
+my %viewkey_expiry;						# hash of xfvks & expiry block number
 
 $config->{'xfvk'} = xfvk_check($config->{'xfvk'});		# check our registration key is valid
 
@@ -146,7 +149,6 @@ $client->on(							# websocket read method
 		}
 		else {
 			common::debug($config->{'debug'}, unpack("H*", $buf));
-
 # TODO: Parse received packets
 		}
 
@@ -162,17 +164,33 @@ my $info  = node_cli('getblockchaininfo', '', 'abort');			# current chain info, 
 my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');	# last block, abort if node is down
 
 									# load viewkeys from memos received by registration address
-									
-foreach my $txn (@{node_cli("z_listreceivedbyaddress $config->{'addr'}")}) {	# check registration address for viewkeys to load
 
-	my @line = split("\n", hex_to_ascii($txn->{'memo'})); 			# convert to ascii & split it lines
+my $txn_reg = node_cli("z_listreceivedbyaddress $config->{'addr'}");	# get all transactions received by registration address
+if (!$txn_reg) {
+	common::debug(0, "The zaddr (or viewkey) for registration is not in the node wallet!! Aborting!!");
+	exit(1);
+}
 
-	foreach $line (@line) {		
+foreach my $txn ( @{$txn_reg} ) {					# loop through transactions to registration address
+
+	my @line = split("\n", hex_to_ascii($txn->{'memo'})); 		# convert memos to ascii, split into lines
+
+	foreach $line (@line) {						# we don't control the format so check each line
 		$line =~ s/\0//g;					# strip nulls
-		if (xfvk_check($line)) {				# add if valid
-# TODO: Check if monitoring period has expired for xfvk before adding 
-			push(@viewkey, $line);	
-			print "Monitoring : " . xfvk_to_addr($line) . "\n";
+
+		if (xfvk_check($line)) {				# check for valid extended full viewing key
+
+			my $status = "ACTIVE ";
+			my $endblock = ($txn->{'amountZat'} / $config->{'price'}) + $txn->{'blockheight'};
+
+			if ($endblock < $block->{'height'}) {		# expired registration, don't load the viewkey
+				$status = "Expired";
+			}
+			else {						# active registration
+				push(@viewkey, $line);	
+				$viewkey_expiry{$line} = $endblock;	# log the expiry block
+			}
+			print "$status : Blks: $txn->{'blockheight'}-$endblock, " . xfvk_to_addr($line) . "\n";
 		}
 	}
 }
@@ -265,6 +283,8 @@ while ($running) {
 	
 					if ($result->{'status'} == 1) {								# decrypted !!! Wooooo!!!! 
 
+						my $value = hex(unpack("H*", $result->{'value'}));
+
 						if ($xfvk eq $viewkey[0]) {							# registration viewkey ?
 					
 							my @line = split("\n", unpack("A*", $result->{'memo'}));		# handle multiline memos, we have no control on format here
@@ -273,20 +293,20 @@ while ($running) {
 
 								$line = xfvk_check($line);					# is it a valid ExtendedFullViewingKey ?
 								if ($line) {
-									common::debug($common->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . hex(unpack("H*", $result->{'value'})));
-# TODO: Prob want to check min value before adding, unless zaddr monitoring is free :-)
-									push(@viewkey, $line);					# add viewkey to monitored array
-									last MEMOLINE;						# we have what we need, skip remaining memo lines
+									
+									common::debug($common->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
+									push(@viewkey, $line);								# append viewkey to monitored array
+									$viewkey_expiry{$line} = ($value / $config->{'price'}) + $block->{'height'};	# expiry blocknumber 
+									last MEMOLINE;				
 								}
 							}
 						}
 						else {										# monitored viewkey
+							common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : " . $value . " : " . unpack("A*", $result->{'memo'}));
 
-							common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : " . hex(unpack("H*", $result->{'value'})) . " : " . unpack("A*", $result->{'memo'}));
-
-							push @data, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	# re-encrypt using viewkey
+							push @data, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	# re-encrypt using viewkey (preserve null-padding!)
 						}
-						last VIEWKEY;									# no need to try remaining keys, we're done!
+						last VIEWKEY;									# we're done! skip remaining keys
 					}
 				}
 			}
@@ -299,19 +319,32 @@ while ($running) {
 	
 		elsif ($zmq_parts[0] eq 'hashblock') {										# new block, confirm mined txn
 	
-			$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');	# update block, abort on failure
-	
+			$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');					# update block, abort on failure
+
 			my $packet = pack("H*",'0100');										# websocket packet, type 0x01, version 0x00
 			$packet .= pack("L", scalar @{$block->{'tx'}});								# 32-bit, count of txids
 	
 			foreach my $txid (@{$block->{'tx'}}) {									# 32-bytes each, txids mined in this block
-				common::debug($config->{'debug'}, "Confirming: $txid");
-				$packet .= pack("H*",$txid);									#
+				common::debug($config->{'debug'}, "Confirming: $txid");						#
+				$packet .= pack("H*",$txid);									# 
 			}
 	
 			if ($tcp_socket) {											# send to websocket server (if connected)
 				$client->write(encode_base64($packet));		
 			}
+
+			my @validkeys = ( $viewkey[0] );
+			foreach my $key (keys %viewkey_expiry) {								# check viewkey expiry info
+				if ($viewkey_expiry{$key} >= $block->{'height'}) {						# still valid, copy it
+					push(@validkeys, $key);
+				}
+				else {												# key expired, remove from monitoring
+					common::debug(0, "Key Expired : $key");
+					delete $viewkey_expiry{$key};
+				}
+			}
+			@viewkey = @validkeys;											# replace array of monitored keys
+
 		}
 	}	
 }
