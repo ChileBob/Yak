@@ -25,15 +25,15 @@ my $maxbytes = 16384;			# maximum packet size (websock server hard limit)
 #
 # 	<type>		u8										('0x00' : type, '0x00' = mempool txn)
 # 	<version>	u8										('0x01' : version)
-# 	<taddr count>	uint32										(number of transparent outputs)
 # 	<txid>		32-bytes									(txid)
+# 	<taddr count>	uint32										(number of transparent outputs)
 # 	<taddr data>	<taddr_count> * (<amount 8-bytes> + <address 35-bytes>)				(transparent output data)
 
 # SHIELDED TRANSCTION NOTIFICATION
 # 	<type>		u8										('0x01' : type, '0x00' = mempool txn)
 # 	<version>	u8										('0x01' : version)
-# 	<zaddr count>	uint32										(number of shielded outputs)
 # 	<txid>		32-bytes									(txid)
+# 	<zaddr count>	uint32										(number of shielded outputs)
 #	<zaddr data>	<zaddr_count> * <ciphertext 544-bytes>						(shielded output ciphertext : AES256)
 
 # TRANSACTION CONFIRMATIONS
@@ -77,11 +77,13 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	if ($data->{'type'} == 0) {				# TRANSPARENT TRANSACTIONS
+	if ($data->{'type'} == 0x00) {				# TRANSPARENT TRANSACTIONS
 
-		$data->{'txid'} = unpack("H64", substr($packet,6,32));  # get txid (32-bytes)
+		$data->{'txid'} = unpack("H64", substr($packet,2,32));  # get txid (32-bytes)
+		
+		print "parse: transparent notification : " . unpack("L", substr($packet,34,4)) . " records\n";
 
-		for ($i = 0; $i < unpack("L", substr($packet,2,4)); $i++) { 		
+		for ($i = 0; $i < unpack("L", substr($packet,34,4)); $i++) { 		
 			push @item, { 
 				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
 				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35))
@@ -91,14 +93,14 @@ sub parse {
 		return($data);		
 	}
 
-	elsif ($data->{'type'} == 1) {				# SHEILDED TRANSACTIONS
+	elsif ($data->{'type'} == 0x01) {				# SHEILDED TRANSACTIONS
 
 		my @ciphertext = ();
 		my @plaintext = ();
 
-		$data->{'txid'} = unpack("H64", substr($packet,6,32));  	# get txid
+		$data->{'txid'} = unpack("H64", substr($packet,2,32));  	# get txid
 
-		for ($i = 0; $i < unpack("L", substr($packet,2,4)); $i++) { 	# ciphertext
+		for ($i = 0; $i < unpack("L", substr($packet,34,4)); $i++) { 	# ciphertext
 
 			my $encoded = substr($packet, (($i*544)+38), 544);	# - binary
 			push @ciphertext, unpack("H*", $encoded);		# - hex string
@@ -120,9 +122,9 @@ sub parse {
 		return($data);				
 	}
 
-	elsif ($data->{'type'} == 2) {				# TRANSACTION CONFIRMATION
+	elsif ($data->{'type'} == 0x02) {				# TRANSACTION CONFIRMATION
 
-		for ($i = 0; $i < unpack("L", substr($packet,2,4)); $i++) { 
+		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
 			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
 		}
 
@@ -130,7 +132,7 @@ sub parse {
 		return($data);					
 	}
 
-	elsif ($data->{'type'} == 3) {				# NODE ANNOUNCEMENT
+	elsif ($data->{'type'} == 0x03) {				# NODE ANNOUNCEMENT
 
 		$data->{'fee'}     = unpack("L", substr($packet,2,4));		# monitoring fee (per block)
 		$data->{'address'} = unpack("A78", substr($packet,6,78));	# registration address
@@ -160,46 +162,92 @@ sub generate {
 	my $body_records = scalar @data_raw;			# number of elements
 	my $body_bytes   = total_size($data);			# data payload
 
-	my $base64_bytes = base64_bytes($body_bytes + 2);	# base64 size
+	my @packet;						# array of packets to send
 
-	my $packet = pack("C1", $type);				# packet header
-       	$packet   .= pack("C1", $version);			# header
+	my $header = pack("C1", $type) . pack("C1", $version);	# packet header
 
-	if ( $type == 0) {					# TRANSACTION NOTIFICATIONS (TADDR)
+	if ( $type == 0x00) {					# TRANSACTION NOTIFICATIONS (TADDR)
 
-		$packet .= pack("L", $body_records - 1);	# number of outputs
-		$packet .= pack("H64", $data_raw[0]);		# 32-bytes, txid (hex-encoded string)
+		my $data = '';
+		my $count = 0;
 
 		foreach my $txn (splice(@data_raw,1)) {		# value, address
-			$packet .= pack("H16", sprintf("%016X", $txn->{'value'}));	
-			$packet .= pack("A35", $txn->{'address'});	
+			
+			my $raw = pack("H16", sprintf("%016x", $txn->{'value'})) . pack("A35", $txn->{'address'});
+
+			if (base64_bytes(length($header) + 4 + length($data) + length($raw)) < $maxbytes) {	
+				$data .= $raw;
+				$count++;
+			}
+			else  {					# max size, add packet to array & start another
+				print "generate() : transparent notification, $count records\n";
+				push @packet, encode_base64($header . pack("H64", $data_raw[0]) .  pack("L", $count) . $data);
+
+				$data = $raw;			# start a new packet
+				$count = 1;
+			}
 		}
+		push @packet, encode_base64($header . pack("H64", $data_raw[0]) .  pack("L", $count) . $data);		# remaining data into new packet
+
+		print "generate() : transparent notification, $count records\n";
 	}	
 
-	elsif ( $type == 1 ) {					# TRANSACTION NOTIFICATIONS (ZADDR)
+	elsif ( $type == 0x01 ) {				# TRANSACTION NOTIFICATIONS (ZADDR)
 
-		$packet .= pack("L", $body_records - 1);	# number of outputs
-		$packet .= pack("H64", $data_raw[0]);		# 32-bytes, txid (hex-encoded string)
-		$packet .= join('', splice(@data_raw, 1));	# AES ciphertext
+		my $data = '';
+		my $count = 0;
+
+		foreach my $txn (splice(@data_raw,1)) {		# value, address
+			
+			if (base64_bytes(length($header) + 4 + length($data) + length($raw)) < $maxbytes) {	
+				$data .= $txn;
+				$count++;
+			}
+			else  {					# max size, add packet to array & start another
+				push @packet, encode_base64($header . pack("H64", $data_raw[0]) .  pack("L", $count) . $data);
+
+				$data = $txn;			# start a new packet
+				$count = 0;
+			}
+		}
+		push @packet, encode_base64($header . pack("H64", $data_raw[0]) .  pack("L", $count) . $data);		# remaining data into new packet
 	}	
 
-	elsif ($type == 2) {					# TRANSACTION CONFIRMATIONS
+	elsif ($type == 0x02) {					# TRANSACTION CONFIRMATIONS
 
-		$packet .= pack("L", $body_records);		# number of confirmations
-		$packet .= pack("H*", join('', @data_raw));	# append txids (hex-encoded strings)
+		my $data = '';
+		my $count = 0;
+
+		foreach my $txid (@data_raw) {			# txid, hex-encode string
+			
+			my $raw = pack("H64", $txid);
+
+			if (base64_bytes(length($header) + length($data) + length($raw)) < $maxbytes) {	
+				$data .= $raw;
+				$count++;
+			}
+			else  {					# packet is max size, add to array
+				push @packet, encode_base64($header . $data);
+
+				$data = $raw;			# start a new packet
+				$count = 0;
+			}
+		}
+		push @packet, encode_base64($header . $data);	# remaining data into new packet
 	}	
 
-	elsif ($type == 3) {					# NODE ANNOUNCEMENT 
 
-       		$packet .= pack("C512", $data_raw[0]);		# 512-bytes, message
-		$packet .= pack("L", $data_raw[1]);		# 4-bytes, zats per block
-		$packet .= pack("A78", $data_raw[2]);		# registration address
-		$packet .= pack("C1", $data_raw[3]);		# 1-byte, status
+	elsif ($type == 0x03) {					# NODE ANNOUNCEMENT 
+
+       		$data = pack("C512", $data_raw[0]);		# 512-bytes, message
+		$data .= pack("L", $data_raw[1]);		# 4-bytes, zats per block
+		$data .= pack("A78", $data_raw[2]);		# registration address
+		$data .= pack("C1", $data_raw[3]);		# 1-byte, status
+
+		push @packet, encode_base64($header . $data);	# create packet
 	}	
 
-	common::debug(10, "packet::generate() : " . unpack("H*", $packet));	# debugging
-
-	return(encode_base64($packet));				# return base64 encoded packet
+	return(@packet);					# return arrayref of base64 encoded packets
 }
 
 

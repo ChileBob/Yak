@@ -226,7 +226,10 @@ while ($running) {
 				else {
 					push @announce, 0;
 				}
-				$client->write(packet::generate(0x03, \@announce, ''));
+
+				foreach my $packet (packet::generate(0x03, \@announce, '')) {				# send packets
+					$client->write($packet);
+				}
 			}
 
 			$config->{'timer_count'} = $config->{'timer_reset'};						# reset interval timer
@@ -238,80 +241,86 @@ while ($running) {
 
 	if ($zmq_parts[0] eq 'rawtx') {											# raw transaction	
 
-		my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');				# decode raw transaction using node RPC
+		my @packet;												# packets to send
 
-		my @vout            = @{$txn->{'vout'}};								# array of transparent outputs
-		my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};							# shielded outputs
+		if ( $tcp_socket ){											# check connection is up
 
-		my @data = ( $txn->{'txid'} );										# txid is the first record
+			my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');				# decode raw transaction using node RPC
 
-		foreach $op (@vout) {											# add output details
-			common::debug($config->{'debug'}, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
-			push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
-		}
+			my @vout            = @{$txn->{'vout'}};								# array of transparent outputs
+			my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};							# shielded outputs
 
-		if ( (scalar @data > 1) && $tcp_socket ){								# send transparent outputs if connection is up
-			$client->write(packet::generate(0, \@data));							# 
-		}
+			my @data = ( $txn->{'txid'} );										# txid is the first record
+	
+			foreach $op (@vout) {											# add output details
+				common::debug($config->{'debug'}, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+				push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
+			}
+	
+			push @packet, packet::generate(0x00, \@data);								# generate packets 
 
-		@data = ( $txn->{'txid'} );										# txid is the first record
 
-		OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {						# loop through all shielded outputs
 
-			VIEWKEY: foreach my $xfvk (@viewkey) {								# loop through all viewkeys
+			@data = ( $txn->{'txid'} );										# txid is the first record
 
-				my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
-
-				if ($result->{'status'} == 1) {								# decrypted !!! Wooooo!!!! 
-
-					my $value = hex(unpack("H*", $result->{'value'}));				# convert value from 8-bytes into something more useful
-					my $memo  = unpack("A*", $result->{'memo'});					# convert memo to ascii & strip null padding
-					$memo =~ s/\0//g;
-
-					if ($xfvk eq $viewkey[0]) {							# sent to our registration address ?
-				
-						my @line = split("\n", $memo);						# memo can be multiline, we have no control on format 
-
-						MEMOLINE : foreach $line (@line) {					# loop through each line
-
-							$line = xfvk_check($line);					# check for a valid ExtendedFullViewingKey
-							if ($line) {
-								
-								common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
-								push(@viewkey, $line);								# append viewkey to monitored array
-								$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
-								last MEMOLINE;				
+			OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {						# loop through all shielded outputs
+	
+				VIEWKEY: foreach my $xfvk (@viewkey) {								# loop through all viewkeys
+	
+					my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
+	
+					if ($result->{'status'} == 1) {								# decrypted !!! Wooooo!!!! 
+	
+						my $value = hex(unpack("H*", $result->{'value'}));				# convert value from 8-bytes into something more useful
+						my $memo  = unpack("A*", $result->{'memo'});					# convert memo to ascii & strip null padding
+						$memo =~ s/\0//g;
+	
+						if ($xfvk eq $viewkey[0]) {							# sent to our registration address ?
+					
+							my @line = split("\n", $memo);						# memo can be multiline, we have no control on format 
+	
+							MEMOLINE : foreach $line (@line) {					# loop through each line
+	
+								$line = xfvk_check($line);				# check for a valid ExtendedFullViewingKey
+								if ($line) {
+									
+									common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
+									push(@viewkey, $line);								# append viewkey to monitored array
+									$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
+									last MEMOLINE;				
+								}
 							}
 						}
+						else {									# monitored viewkey
+							common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
+							push @packet, packet::generate(0x01, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}));
+						}
+						last VIEWKEY;		
 					}
-					else {													# monitored viewkey
-						common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-						push @data, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}); 	# re-encrypt raw bytes using hash of viewkey
-					}
-					last VIEWKEY;		
+					# TODO : Send packet with gibberish data to hide that we couldn't decode, otherwise we leak privacy through inaction
 				}
 			}
-		}
 
-		if ( (scalar @data > 1) && $tcp_socket) {								# send shielded outputs, if we have any and are connected
-# TODO: packet::generate() : changing to use arrayref of packets
-			$client->write(packet::generate(1, \@data));							# broadcast
+			foreach my $pkt (@packet) {									# send packets
+				$client->write($pkt);
+			}
 		}
 	}
 	
 	elsif ($zmq_parts[0] eq 'hashblock') {										# new block, confirm mined txn
-
 		
 		$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');					# update block, abort on failure
 
 		if ($tcp_socket) {											# check connection status
 
-			my @data = ();											# send transaction confirmations
+			my @data = ();											# get transaction ids
 			foreach my $txid (@{$block->{'tx'}}) {								
 				common::debug($config->{'debug'}, "Confirming: $txid");							
 				push @data, $txid;
 			}
-			$client->write(packet::generate(2, \@data));
+			foreach my $packet (packet::generate(0x02, \@data)) {						# generate packet & send
+				$client->write($packet);
+			}
 		}
 
 		

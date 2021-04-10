@@ -12,7 +12,7 @@
 my $config = {						# default configuration
 	port =>  8834,
 	tick =>  5,
-	debug => 1
+	debug => 0
 };
 
 # TODO: cache transparent txns, confirmations & announcements, allows clients to catch up

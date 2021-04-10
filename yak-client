@@ -67,7 +67,6 @@ $client->on(
 		my $client = shift;
 		my ($buf) = @_;
 		syswrite $tcp_socket, $buf;
-		sleep(1);
 	}
 );
 
@@ -82,9 +81,19 @@ $client->on(							# websocket read method
 		else {
 			my $packet = packet::parse(decode_base64($buf), $testxfvk);	
 
-			if ($packet->{'type'} == 2) {
-				print Dumper $packet;
+			if ($packet->{'type'} == 0) {
+				common::debug(0, 'TRANSPARENT NOTIFICATION');
 			}
+			elsif ($packet->{'type'} == 1) {
+				common::debug(0, 'SHIELDED NOTIFICATION');
+			}
+			elsif ($packet->{'type'} == 2) {
+				common::debug(0, 'TRANSACTION CONFIRMATION');
+			}
+			elsif ($packet->{'type'} == 3) {
+				common::debug(0, 'NODE ANNOUNCEMENT');
+			}
+			print Dumper $packet;
 		}
 	}
 );
