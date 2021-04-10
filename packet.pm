@@ -7,12 +7,19 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
+# TODO: generate() : receives arrayref of data in source format (strings, binary, etc), add conversions & enforce sizes etc
+
 package packet;
 			
 use Devel::Size qw(total_size);		# used to determine raw data size before generating packets
+use Convert::Base64;			# used to encode packets for transport
+
+use Data::Dumper;			# debugging
 
 require './common.pm';			# common subs
 require './aes256.pm';			# AES encrypt/decrypt
+
+my $maxbytes = 16384;			# maximum packet size (websock server hard limit)
 
 # TRANSPARENT TRANSCTION NOTIFICATION
 #
@@ -28,7 +35,6 @@ require './aes256.pm';			# AES encrypt/decrypt
 # 	<zaddr count>	uint32										(number of shielded outputs)
 # 	<txid>		32-bytes									(txid)
 #	<zaddr data>	<zaddr_count> * <ciphertext 544-bytes>						(shielded output ciphertext : AES256)
-
 
 # TRANSACTION CONFIRMATIONS
 #
@@ -111,7 +117,6 @@ sub parse {
 		}
 		$data->{'ciphertext'} = \@ciphertext;			
 		$data->{'plaintext'}  = \@plaintext;			
-
 		return($data);				
 	}
 
@@ -148,29 +153,53 @@ sub parse {
 sub generate {
 
 # TODO: return arrayref of packets less than maxbytes when base64 encoded
-# TODO: move AES encrypt to packet::generate() for shielded transaction notification
 	
 	my ($type, $data, $xfvk) = @_;				# type, binary data, viewkey
 
-	my $records = scalar @{$data};				# number of elements
-	my $bytes_body = total_size($data);			# data payload
+	my @data_raw = @{$data};				# de-reference data, easier to handle
+	my $body_records = scalar @data_raw;			# number of elements
+	my $body_bytes   = total_size($data);			# data payload
 
-	my $packet = pack("C1", $type) . pack("C1", $version);	# header
+	my $base64_bytes = base64_bytes($body_bytes + 2);	# base64 size
 
-	my $count = scalar @{$data}; 				# count of data items
-	if ($type < 2) {					# transaction notifications have txid as first data item (32-bytes)
-		$count--;
-		$packet .= pack("L", $count);	 		# append item counter
-	}
+	my $packet = pack("C1", $type);				# packet header
+       	$packet   .= pack("C1", $version);			# header
 
-	foreach my $element (@{$data}) {			# append data 
+	if ( $type == 0) {					# TRANSACTION NOTIFICATIONS (TADDR)
 
-		$packet .= $element;
-	}
+		$packet .= pack("L", $body_records - 1);	# number of outputs
+		$packet .= pack("H64", $data_raw[0]);		# 32-bytes, txid (hex-encoded string)
 
-	common::debug($debug, "packet::generate() : " . unpack("H*", $packet));
+		foreach my $txn (splice(@data_raw,1)) {		# value, address
+			$packet .= pack("H16", sprintf("%016X", $txn->{'value'}));	
+			$packet .= pack("A35", $txn->{'address'});	
+		}
+	}	
 
-	return($packet);					# assembled packet
+	elsif ( $type == 1 ) {					# TRANSACTION NOTIFICATIONS (ZADDR)
+
+		$packet .= pack("L", $body_records - 1);	# number of outputs
+		$packet .= pack("H64", $data_raw[0]);		# 32-bytes, txid (hex-encoded string)
+		$packet .= join('', splice(@data_raw, 1));	# AES ciphertext
+	}	
+
+	elsif ($type == 2) {					# TRANSACTION CONFIRMATIONS
+
+		$packet .= pack("L", $body_records);		# number of confirmations
+		$packet .= pack("H*", join('', @data_raw));	# append txids (hex-encoded strings)
+	}	
+
+	elsif ($type == 3) {					# NODE ANNOUNCEMENT 
+
+       		$packet .= pack("C512", $data_raw[0]);		# 512-bytes, message
+		$packet .= pack("L", $data_raw[1]);		# 4-bytes, zats per block
+		$packet .= pack("A78", $data_raw[2]);		# registration address
+		$packet .= pack("C1", $data_raw[3]);		# 1-byte, status
+	}	
+
+	common::debug(10, "packet::generate() : " . unpack("H*", $packet));	# debugging
+
+	return(encode_base64($packet));				# return base64 encoded packet
 }
 
 
@@ -178,7 +207,7 @@ sub generate {
 #
 # calculate length of base64 encoded data given the raw length in bytes
 #
-sub base64_length {
+sub base64_bytes {
 
 	use integer;
 
@@ -188,5 +217,4 @@ sub base64_length {
 	return( $groups + ($groups % 2) + ($bits % 6) );
 }
 
-
-1;	# all packages are true
+1;	# all packages are true, even those that dont work properly

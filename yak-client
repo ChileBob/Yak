@@ -81,7 +81,10 @@ $client->on(							# websocket read method
 		}
 		else {
 			my $packet = packet::parse(decode_base64($buf), $testxfvk);	
-			print Dumper $packet;
+
+			if ($packet->{'type'} == 2) {
+				print Dumper $packet;
+			}
 		}
 	}
 );
