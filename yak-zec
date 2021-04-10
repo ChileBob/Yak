@@ -86,16 +86,16 @@ $config->{'xfvk'} = xfvk_check($config->{'xfvk'});			# check registration viewke
 if ($config->{'xfvk'}) {	
 	push(@viewkey, $config->{'xfvk'});
 	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});		# derive address from xfvk
-	common::debug(0, "REG: $config->{'addr'}");
+	common::debug($config->{'debug'}, "REG: $config->{'addr'}");
 }
 else {									# MUST have a valid registration viewkey
 	print("Registration viewkey is NOT VALID ! Aborting\n");
 	exit(1);
 }
 
-common::debug(0, "ID : $config->{'client_ident'}");			# show connection detail
-common::debug(0, "ZMQ: $config->{'zmq'}");
-common::debug(0, "WEB: $config->{'web'}");
+common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");	# show connection detail
+common::debug($config->{'debug'}, "ZMQ: $config->{'zmq'}");
+common::debug($config->{'debug'}, "WEB: $config->{'web'}");
 
 my $ctx = ZMQ::FFI->new();						# ZMQ connection
 my $zmq_socket = $ctx->socket(ZMQ_SUB);					# 
@@ -112,7 +112,7 @@ my $tcp_socket = IO::Socket::INET->new(					#
 );
 
 if (!$tcp_socket) {							# confirm connection
-	common::debug (0, "WEB: $config->{'web'} : WARNING!!! NOT CONNECTED!!!");
+	common::debug ($config->{'debug'}, "WEB: $config->{'web'} : WARNING!!! NOT CONNECTED!!!");
 }
 									# start websocket client
 my $client = Protocol::WebSocket::Client->new(url => "$config->{'web'}");
@@ -138,14 +138,11 @@ $client->on(								# websocket read method
 		my $client = shift;
 		my ($buf) = @_;
 
-		common::debug($config->{'debug'}, "RX: $buf");
-
 		if ($buf =~ m/^HELLO/) {				# receive server welcome message
 			common::debug($config->{'debug'}, "Connected!");
 		}
 		else {
-			common::debug($config->{'debug'}, unpack("H*", $buf));
-# TODO: Parse received packets
+# TODO: Parse received packets, do that here....
 		}
 
 	}
@@ -249,7 +246,7 @@ while ($running) {
 		my @data = ( $txn->{'txid'} );										# txid is the first record
 
 		foreach $op (@vout) {											# add output details
-#			common::debug(0, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+			common::debug($config->{'debug'}, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
 			push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
 		}
 
@@ -280,7 +277,7 @@ while ($running) {
 							$line = xfvk_check($line);					# check for a valid ExtendedFullViewingKey
 							if ($line) {
 								
-								common::debug($common->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
+								common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
 								push(@viewkey, $line);								# append viewkey to monitored array
 								$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
 								last MEMOLINE;				
@@ -311,7 +308,7 @@ while ($running) {
 
 			my @data = ();											# send transaction confirmations
 			foreach my $txid (@{$block->{'tx'}}) {								
-				common::debug(0, "Confirming: $txid");						
+				common::debug($config->{'debug'}, "Confirming: $txid");							
 				push @data, $txid;
 			}
 			$client->write(packet::generate(2, \@data));
@@ -324,7 +321,7 @@ while ($running) {
 				push(@validkeys, $key);									
 			}
 			else {												# but this one can go
-				common::debug(0, "Key Expired : $key");
+				common::debug($config->{'debug'}, "Key Expired : $key");
 				delete $viewkey_expiry{$key};
 			}
 		}
