@@ -8,6 +8,7 @@
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
 use Data::Dumper;					# debugging output
+
 use Time::HiRes q(usleep);				# high res timer
 use IO::Socket::INET;					# general purpose networking
 use Protocol::WebSocket::Client;			# websocket client
@@ -67,6 +68,7 @@ $client->on(
 		my $client = shift;
 		my ($buf) = @_;
 		syswrite $tcp_socket, $buf;
+		usleep 100_00;
 	}
 );
 
@@ -81,6 +83,8 @@ $client->on(							# websocket read method
 		else {
 			my $packet = packet::parse(decode_base64($buf), $testxfvk);	
 
+	#		print Dumper $packet;
+
 			if ($packet->{'type'} == 0) {
 				common::debug(0, 'TRANSPARENT NOTIFICATION');
 			}
@@ -93,7 +97,6 @@ $client->on(							# websocket read method
 			elsif ($packet->{'type'} == 3) {
 				common::debug(0, 'NODE ANNOUNCEMENT');
 			}
-			print Dumper $packet;
 		}
 	}
 );

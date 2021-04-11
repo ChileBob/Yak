@@ -12,7 +12,7 @@
 my $config = {						# default configuration
 	port =>  8834,
 	tick =>  5,
-	debug => 0
+	debug => 5
 };
 
 # TODO: cache transparent txns, confirmations & announcements, allows clients to catch up
@@ -32,16 +32,16 @@ use Net::WebSocket::Server;				# websocket server
 use Convert::Base64;					# base64 encode/decode
 use Digest::SHA qw(sha256);				# sha hashing for network packets
 
+
 require './common.pm';					# common subs
 
 my %transport;						# transport encoding for each connection (BINARY, BASE64)
 my %clientkey;						# client keys
-
-my @tracker;						# hash of packets sent, prevents duplicates
+my @tracker;						# array of hashed packets, prevents duplicates
 
 $SIG{INT} = \&server_shutdown;				# graceful shutdown (not implemented)
 
-Net::WebSocket::Server->new(				# websocket server
+Net::WebSocket::Server->new(				# setup websocket server
 
 	listen => $config->{'port'},			# network port number we listen to
 
@@ -77,7 +77,7 @@ Net::WebSocket::Server->new(				# websocket server
 					
 					($transport->{$conn}, $clientkey->{$conn}) = split(':', $msg);	# store connection type and client key
 					$conn->send_utf8("HELLO\n");					# say hi to the client
-					common::debug($config->{'debug'}, "Connect : $clientkey->{$conn}");
+					common::debug(0, "Connect : $clientkey->{$conn}");
 				}
 
 				else {

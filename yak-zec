@@ -209,7 +209,6 @@ while ($running) {
 	until ($zmq_socket->has_pollin) {					# wait until zmq says something
 		usleep 100_00;
 
-
 		$config->{'timer_count'}--;					# interval timer
 
 		if ($config->{'timer_count'} <= 0) {	
@@ -247,60 +246,69 @@ while ($running) {
 
 			my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');				# decode raw transaction using node RPC
 
-			my @vout            = @{$txn->{'vout'}};								# array of transparent outputs
+			my @vout = @{$txn->{'vout'}};										# array of transparent outputs
+	
+			if (scalar @vout > 0) {
+	
+				my @data = ( $txn->{'txid'} );										# txid is the first record
+	
+				foreach $op (@vout) {											# add output details
+					common::debug(0, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+					push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
+				}
+
+				common::debug(0, scalar @vout . " outputs\n");
+				push @packet, packet::generate(0x00, \@data);								# generate packets 
+			}
+
+
+
 			my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};							# shielded outputs
 
-			my @data = ( $txn->{'txid'} );										# txid is the first record
-	
-			foreach $op (@vout) {											# add output details
-				common::debug($config->{'debug'}, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
-				push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
-			}
-	
-			push @packet, packet::generate(0x00, \@data);								# generate packets 
+			if (scalar @vShieldedOutput > 0) {
 
+				my @data = ( $txn->{'txid'} );										# txid is the first record
 
-
-			@data = ( $txn->{'txid'} );										# txid is the first record
-
-			OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {						# loop through all shielded outputs
-	
-				VIEWKEY: foreach my $xfvk (@viewkey) {								# loop through all viewkeys
-	
-					my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
-	
-					if ($result->{'status'} == 1) {								# decrypted !!! Wooooo!!!! 
-	
-						my $value = hex(unpack("H*", $result->{'value'}));				# convert value from 8-bytes into something more useful
-						my $memo  = unpack("A*", $result->{'memo'});					# convert memo to ascii & strip null padding
-						$memo =~ s/\0//g;
-	
-						if ($xfvk eq $viewkey[0]) {							# sent to our registration address ?
-					
-							my @line = split("\n", $memo);						# memo can be multiline, we have no control on format 
-	
-							MEMOLINE : foreach $line (@line) {					# loop through each line
-	
-								$line = xfvk_check($line);				# check for a valid ExtendedFullViewingKey
-								if ($line) {
-									
-									common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
-									push(@viewkey, $line);								# append viewkey to monitored array
-									$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
-									last MEMOLINE;				
+				OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {						# loop through all shielded outputs
+		
+					VIEWKEY: foreach my $xfvk (@viewkey) {								# loop through all viewkeys
+		
+						my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
+		
+						if ($result->{'status'} == 1) {								# decrypted !!! Wooooo!!!! 
+		
+							my $value = hex(unpack("H*", $result->{'value'}));				# convert value from 8-bytes into something more useful
+							my $memo  = unpack("A*", $result->{'memo'});					# convert memo to ascii & strip null padding
+							$memo =~ s/\0//g;
+		
+							if ($xfvk eq $viewkey[0]) {							# sent to our registration address ?
+						
+								my @line = split("\n", $memo);						# memo can be multiline, we have no control on format 
+		
+								MEMOLINE : foreach $line (@line) {					# loop through each line
+		
+									$line = xfvk_check($line);					# check for a valid ExtendedFullViewingKey
+									if ($line) {
+										
+										common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
+										push(@viewkey, $line);								# append viewkey to monitored array
+										$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
+										last MEMOLINE;				
+									}
 								}
+								# TODO : Send packet with gibberish data to hide that we decoded a registration, otherwise we leak privacy through inaction
 							}
+							else {										# monitored viewkey
+								common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
+								push @packet, packet::generate(0x01, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}));
+							}
+							last VIEWKEY;		
 						}
-						else {									# monitored viewkey
-							common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-							push @packet, packet::generate(0x01, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}));
-						}
-						last VIEWKEY;		
+						# TODO : Send packet with gibberish data to hide that we couldn't decode, otherwise we leak privacy through inaction
 					}
-					# TODO : Send packet with gibberish data to hide that we couldn't decode, otherwise we leak privacy through inaction
 				}
 			}
-
+	
 			foreach my $pkt (@packet) {									# send packets
 				$client->write($pkt);
 			}
@@ -318,6 +326,7 @@ while ($running) {
 				common::debug($config->{'debug'}, "Confirming: $txid");							
 				push @data, $txid;
 			}
+
 			foreach my $packet (packet::generate(0x02, \@data)) {						# generate packet & send
 				$client->write($packet);
 			}
