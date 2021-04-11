@@ -147,7 +147,7 @@ sub parse {
 	#		return($data);
 	#	}
 	        elsif ($data->{'type'} = 0x05) {				# HEARTBEAT
-			common::debug(5, , "packet::parse() : heartbeart");
+			common::debug(5, "packet::parse() : heartbeart");
 			$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
 
 			return($data);		

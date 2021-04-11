@@ -8,6 +8,7 @@
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
 # TODO: Add messaging to clients for when a viewkey is added/removed
+# TODO: Wait for node to fully sync, avoids flooding yaknet with old transactions
 
 # ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
 # ISSUE: The payment address cannot be derived from an IVK, so maybe not.
@@ -52,6 +53,7 @@ my $config = { 						# DEFAULT CONFIGURATION
 	timer_reset => 6000,				# interval timer reset value (60 seconds)
 	timer_count => 0,				# interval timer count
 	client_ident => aes256::keyRandom(32,'A'),	# client ident, randomised on startup
+	client_auth => 'changethispassword',		# client password, bypasses yak-yak rate limit
 	debug => 5,					# debugging output level
 	node_client => 'zcash-cli',			# fullnode client binary
 	zmq => 'tcp://127.0.0.1:28232',			# fullnode zmq
@@ -127,9 +129,7 @@ $client->on(
 	write => sub {							# websocket write method
 		my $client = shift;
 		my ($buf) = @_;
-
 		syswrite $tcp_socket, $buf;
-		usleep 100_00;	
 	}
 );
 
@@ -142,6 +142,7 @@ $client->on(								# websocket read method
 			common::debug($config->{'debug'}, "Connected!");
 		}
 		else {
+			print "RX: $buf\n";
 # TODO: Parse received packets, do that here....
 		}
 
@@ -149,8 +150,9 @@ $client->on(								# websocket read method
 );
 
 $client->connect;							# connect to websocket server
+sleep(2);								# give yak-yak a little time to setup
 
-$client->write("BASE64:$config->{'client_ident'}");			# subscribe for BASE64 transport & send our random session/client ID
+$client->write("BASE64:$config->{'client_ident'}:$config->{'client_auth'}");	# subscribe for BASE64 transport, send ident & auth
 
 my $info  = node_cli('getblockchaininfo', '', 'abort');			# current chain info, abort if node is down
 
@@ -234,7 +236,6 @@ while ($running) {
 			$config->{'timer_count'} = $config->{'timer_reset'};						# reset interval timer
 		}
 	}
-
 
 	my @zmq_parts = $zmq_socket->recv_multipart();									# read ZMQ
 

@@ -23,7 +23,8 @@ require './aes256.pm';					# AES256 encrypt/decrypt
 require './packet.pm';					# yak packet encode/decode
 
 my $config = { 						# DEFAULT CONFIGURATION
-	client_ident => aes256::keyRandom(32, 'A'),	# create a new random client ident
+	ident    => aes256::keyRandom(32, 'A'),		# create a new random client ident
+	auth     => 'changethispassword',		# password to bypass yak-yak rate limit
 	web_type => 'ws',				# websocket server
 	web_addr => '127.0.0.1',			#
 	web_port => 8834,				#
@@ -57,22 +58,21 @@ if (!$tcp_socket) {						# confirm connection
 								# start websocket client
 my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");
 
-$client->on(							# websocket connect method
+$client->on(							# websocket connect 
 	connect => sub {
 		my $client = shift;
 	}
 );
 
 $client->on(
-	write => sub {						# websocket write method
+	write => sub {						# websocket write
 		my $client = shift;
 		my ($buf) = @_;
 		syswrite $tcp_socket, $buf;
-		usleep 100_00;
 	}
 );
 
-$client->on(							# websocket read method
+$client->on(							# websocket read
 	read => sub {
 
 		my $client = shift;
@@ -87,6 +87,7 @@ $client->on(							# websocket read method
 
 			if ($packet->{'type'} == 0x01) {
 				common::debug(0, 'TRANSPARENT NOTIFICATION');
+				print Dumper $packet;
 			}
 			elsif ($packet->{'type'} == 0x02) {
 				common::debug(0, 'SHIELDED NOTIFICATION');
@@ -108,9 +109,10 @@ $client->on(							# websocket read method
 	}
 );
 
-$client->connect;							# connect to websocket server
+$client->connect;						# connect to websocket server
+sleep(2);							# yak-yak needs a little time
 
-$client->write("BASE64:$config->{'client_ident'}");			# subscribe for BASE64 transport & send our client ID
+$client->write("BASE64:$config->{'ident'}:$config->{'auth'}");	# subscribe for BASE64 transport, send ident & auth
 
 while ($running) {
 

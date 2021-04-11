@@ -24,34 +24,37 @@ To enable ZMQ on your YCASH node, add this to ycash.conf :-
 - zmqpubrawtx=tcp://127.0.0.1:28832
 - zmqpubhashblock=tcp://127.0.0.1:28832
 
-yak-web :-
+yak-yak :-
 - Websocket server, run it from a terminal.
-- It broadcasts everything it receives from yec-yak & zec-yak to all connected clients.
+- Broadcasts everything it receives from yec-yak & zec-yak to all connected clients.
+- Supports binary & base64 transport.
+- Simple authentication, rate limits unauthenticated clients.
 
 yak-client :-
 - Websocket client, run it from a terminal.
-- Listens to broadcasts from yak-web.
+- Listens to broadcasts from yak-yak.
 - Decrypts AES256 shielded notifications sent by yak-zec
+- Debugging tool for displaying broadcasts.
+
+yak-web :-
+- Websocket client, run it from a terminal.
+- Connects a website to yak-yak.
+- Decrypts shielded broadcasts using a viewkey & triggers a URI 
 
 yak-zec :-
 - Zcash fullnode (zcashd) connector/client.
 - Run it from a terminal AS THE SAME USER that runs zcashd
-- Make sure the node client (zcash-cli) is in the $PATH.
 - Streams transparent transaction outputs.
 - Streams confirmed (mined) transactions
-- Attempts to decode shielded outputs using viewkeys.
-  - If successful, AES256 encrypts and sends details for broadcast.
-  - Viewkeys are sent by encrypted memo.
-  - Broadcasts are encrypted with a hash of the viewkey.
+- Decode shielded outputs using viewkeys.
+  - AES256 encrypts and broadcasts shielded notifications.
 - Basic fee mechanism (per block) for monitoring a viewkey.
+- Viewkey registration is by encrypted memo.
 
 yak-yec :-
 - Waiting on the ycash version of librustzcash
 - Will do everything yak-zec does but for Ycash
 - (Incidentally, the idea originally came from the Ycash people)
-
-yak-yak :-
-- Not yet written, messaging client
 
 Known issues :-
 - The clients do not attempt reconnection if the server is restarted.

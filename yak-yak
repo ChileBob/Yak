@@ -1,0 +1,169 @@
+#!/usr/bin/perl
+#
+# websocket server testing - lets see how fast this puppy can go!
+
+my $config = {						# default configuration
+	auth =>  'changethispassword',			# password to avoid rate limiter
+	limit => 20,					# max number of posts per tick interval 
+	port =>  8834,					# listening port number
+	tick =>  10					# tick interval (seconds)
+};
+
+use utf8;
+use Net::WebSocket::Server;				# websocket server
+use Convert::Base64;					# base64 encode/decode
+use Data::Dumper;
+use Digest::SHA qw(sha256);
+
+require './aes256.pm';
+
+my @pkt_hash;						# sha256 hashes of packets (prevents duplicates)
+
+my $client;						# connected clients
+
+$SIG{INT} = \&server_shutdown;				# graceful shutdown (not implemented)
+
+Net::WebSocket::Server->new(				# setup websocket server
+
+	listen => $config->{'port'},			# network port number we listen to
+
+	tick_period => $config->{'tick'},		# seconds between timestamp/tick events (5 seconds or less)
+
+	on_tick => sub {									# timed event handler
+
+		my ($serv, $conn) = @_;
+
+		foreach my $dest ($serv->connections) {			# loop through all connections
+
+			if ( ($client->{$dest}->{'rate'} > $config->{'limit'}) && ($client->{$dest}->{'auth'} ne $config->{'auth'})) {
+				print "$client->{$dest}->{'ident'} : DISCONNECTING : Rate limit exceeded ($client->{$dest}->{'rate'})\n";
+				$serv->disconnect($dest->{'socket'})
+			}
+			else {
+				print "$client->{$dest}->{'ident'} : $client->{$dest}->{'rate'}\n";
+				$client->{$dest}->{'rate'} = 0;
+			}
+		}
+	},
+
+	on_connect => sub {									# connection handler
+
+		my ($serv, $conn) = @_;
+
+		$conn->on(
+
+			handshake => sub {								# new connection
+			
+				my ($conn, $handshake) = @_;
+				$client->{$conn}->{'rate'} = 0;						# initialise rate limiter
+			},
+
+			disconnect => sub {
+				print "$client->{$conn}->{'ident'} : Disconnected\n";
+				delete $client->{$conn};
+			},
+
+			binary => sub {									# binary data
+
+				my ($conn, $msg) = @_;
+
+				pkt_buffer($conn, $msg, 'BINARY');					# broadcast
+			},
+
+			utf8 => sub {									# client sent text/base64 data
+
+
+				my ($conn, $msg) = @_;
+
+				if ( $msg =~ m/^BINARY/ || $msg =~ m/^BASE64/) {			# subscription
+					
+					($client->{$conn}->{'transport'}, $client->{$conn}->{'ident'}, $client->{$conn}->{'auth'}) = split(':', $msg);
+					$conn->send_utf8("HELLO");					# say hi
+					print "$client->{$conn}->{'ident'} : Connected\n";
+				}
+
+				else {									# BASE64 data
+
+					pkt_buffer($conn, $msg, 'BASE64');				# broadcast
+
+				}
+			},
+		);
+	},
+)->start;
+
+print("Bye!/n");
+exit(0); 		
+
+
+
+#############################################################################################################################################################################
+#
+# shutdown server
+#
+sub server_shutdown {
+
+	print("Bye!\n");
+	exit(0);
+}
+
+
+#############################################################################################################################################################################
+#
+# add packet to buffer
+#
+sub pkt_buffer {	
+
+	my ($conn, $raw, $transport) = @_;
+
+	my $binary;
+	my $base64;
+
+	$client->{$conn}->{'rate'}++;				# client rate limiter
+
+	if ($transport eq 'BASE64') {				# convert from BASE64 if needed
+		$base64 = $raw;
+		$binary = decode_base64($raw);
+		$conn->send_utf8('OK');				# ack
+	}
+	elsif ($transport eq 'BINARY') {			# default is BINARY
+		$base64 = encode_base64($raw);
+		$binary = $raw;
+		$conn->send_binary(pack("A*", "OK"));		# ack
+	}
+
+	my $hash = sha256($binary);				# hash the packet
+
+	if (!grep $_ eq $hash, @pkt_hash) {			# check for duplicates
+		push @pkt_hash, $hash;
+
+		if (scalar @pkt_hash > 100) {			# control tracker size
+			shift @pkt_hash;
+		}
+
+		broadcast ($conn, $binary, $base64, $hash);	# broadcast
+	}
+}
+
+
+#############################################################################################################################################################################
+#
+# broadacast packet
+#
+sub broadcast {
+
+	my ($conn, $pkt_binary, $pkt_base64, $pkt_hash) = @_;		# connections, binary data, base64 data
+
+	foreach my $dest ($conn->server->connections) {			# loop through all connections
+
+		if ($conn != $dest) {					# dont send to originating client
+			if ($client->{$dest}->{'transport'} eq 'BASE64') {		# - send as base64
+				$dest->send_utf8($pkt_base64);
+			}
+			elsif ($client->{$dest}->{'transport'} eq 'BINARY') {	# - send as binary
+				$dest->send_binary($pkt_binary);
+			}
+		}
+	}
+}
+
