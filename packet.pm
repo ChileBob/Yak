@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+
 #
 # yak-zec : packet generation & parsing
 #
@@ -77,7 +78,7 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	if ($data->{'type'} == 0x00) {				# TRANSPARENT TRANSACTIONS
+	if ($data->{'type'} == 0x01) {				# TRANSPARENT TRANSACTIONS
 
 		my $count = unpack("L", substr($packet,34,4));
 		print "packet::parse() : $count records\n";
@@ -93,7 +94,7 @@ sub parse {
 		return($data);		
 	}
 
-	#	elsif ($data->{'type'} == 0x01) {				# SHEILDED TRANSACTIONS
+	#	elsif ($data->{'type'} == 0x02) {				# SHEILDED TRANSACTIONS
 	#
 	#		my @ciphertext = ();
 	#		my @plaintext = ();
@@ -125,7 +126,7 @@ sub parse {
 	#		return($data);				
 	#	}
 	#
-	#	elsif ($data->{'type'} == 0x02) {				# TRANSACTION CONFIRMATION
+	#	elsif ($data->{'type'} == 0x03) {				# TRANSACTION CONFIRMATION
 	#
 	#		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
 	#			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
@@ -135,7 +136,7 @@ sub parse {
 	#		return($data);					
 	#	}
 	#
-	#	elsif ($data->{'type'} == 0x03) {				# NODE ANNOUNCEMENT
+	#	elsif ($data->{'type'} == 0x04) {				# NODE ANNOUNCEMENT
 	#
 	#		$data->{'fee'}     = unpack("L", substr($packet,2,4));		# monitoring fee (per block)
 	#		$data->{'address'} = unpack("A78", substr($packet,6,78));	# registration address
@@ -145,7 +146,13 @@ sub parse {
 	#
 	#		return($data);
 	#	}
-	#
+	        elsif ($data->{'type'} = 0x05) {				# HEARTBEAT
+			common::debug(5, , "packet::parse() : heartbeart");
+			$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
+
+			return($data);		
+		}
+
 								# if we get this far, we failed to parse it
 	common::debug($debug, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
 }
@@ -167,7 +174,7 @@ sub generate {
 
 	my $header = pack("C1", $type) . pack("C1", $version);	# packet header
 
-	if ( $type == 0x00) {					# TRANSACTION NOTIFICATIONS (TADDR)
+	if ( $type == 0x01) {					# TRANSACTION NOTIFICATIONS (TADDR)
 
 		my $data = '';
 		my $count = 0;
@@ -192,7 +199,7 @@ sub generate {
 		push @packet, encode_base64($header . pack("L", $count) . $data);		# remaining data into new packet
 	}	
 
-	elsif ( $type == 0x01 ) {				# TRANSACTION NOTIFICATIONS (ZADDR)
+	elsif ( $type == 0x02 ) {				# TRANSACTION NOTIFICATIONS (ZADDR)
 
 		my $data = '';
 		my $count = 0;
@@ -215,7 +222,7 @@ sub generate {
 		push @packet, encode_base64($header . pack("L", $count) . $data);		# remaining data into new packet
 	}	
 
-	elsif ($type == 0x02) {					# TRANSACTION CONFIRMATIONS
+	elsif ($type == 0x03) {					# TRANSACTION CONFIRMATIONS
 
 		my $data = '';
 		my $count = 0;
@@ -239,7 +246,7 @@ sub generate {
 	}	
 
 
-	elsif ($type == 0x03) {					# NODE ANNOUNCEMENT 
+	elsif ($type == 0x04) {					# NODE ANNOUNCEMENT 
 
        		$data = pack("C512", $data_raw[0]);		# 512-bytes, message
 		$data .= pack("L", $data_raw[1]);		# 4-bytes, zats per block
@@ -249,7 +256,12 @@ sub generate {
 		push @packet, encode_base64($header . $data);	# create packet
 	}	
 
-	return(@packet);					# return arrayref of base64 encoded packets
+	elsif ($type == 0x05) {					# HEARTBEAT
+
+		push @packet, encode_base64($header);		# create packet
+	}
+
+	return(@packet);					# return of base64 encoded packets
 }
 
 

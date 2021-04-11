@@ -15,6 +15,8 @@ my $config = {						# default configuration
 	debug => 5
 };
 
+require "./packet.pm";
+
 # TODO: cache transparent txns, confirmations & announcements, allows clients to catch up
 # TODO: spam prevention, rate limit client sending
 # TODO: spam prevention, disconnect & block
@@ -49,7 +51,14 @@ Net::WebSocket::Server->new(				# setup websocket server
 
 	on_tick => sub {				##################################################################################################
 
-		common::debug($config->{'debug'}, "tick..");			# timestamp tick/heartbeat
+		my ($serv, $conn) = @_;
+
+		common::debug($config->{'debug'}, "tick..");			# heartbeat
+		my $msg = pack("H*", '0501');
+
+		foreach ($serv->connections) {					# send to all connected clients
+			writeClient($_, $msg);				
+		}
 	},
 
 	on_connect => sub {				##################################################################################################

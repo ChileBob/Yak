@@ -40,6 +40,5 @@ sub uri_split {
 	return(@parts);
 }
 
-
 1;	# all packages are true, especially the ones that are not
 

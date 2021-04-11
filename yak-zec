@@ -226,7 +226,7 @@ while ($running) {
 					push @announce, 0;
 				}
 
-				foreach my $packet (packet::generate(0x03, \@announce, '')) {				# send packets
+				foreach my $packet (packet::generate(0x04, \@announce, '')) {				# send packets
 					$client->write($packet);
 				}
 			}
@@ -258,7 +258,7 @@ while ($running) {
 				}
 
 				common::debug(0, scalar @vout . " outputs\n");
-				push @packet, packet::generate(0x00, \@data);								# generate packets 
+				push @packet, packet::generate(0x01, \@data);								# generate packets 
 			}
 
 
@@ -300,7 +300,7 @@ while ($running) {
 							}
 							else {										# monitored viewkey
 								common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-								push @packet, packet::generate(0x01, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}));
+								push @packet, packet::generate(0x02, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}));
 							}
 							last VIEWKEY;		
 						}
@@ -327,7 +327,7 @@ while ($running) {
 				push @data, $txid;
 			}
 
-			foreach my $packet (packet::generate(0x02, \@data)) {						# generate packet & send
+			foreach my $packet (packet::generate(0x03, \@data)) {						# generate packet & send
 				$client->write($packet);
 			}
 		}

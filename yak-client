@@ -74,6 +74,7 @@ $client->on(
 
 $client->on(							# websocket read method
 	read => sub {
+
 		my $client = shift;
 		my ($buf) = @_;
 
@@ -81,22 +82,28 @@ $client->on(							# websocket read method
 			common::debug(0, "Connected!");
 		}
 		else {
+
 			my $packet = packet::parse(decode_base64($buf), $testxfvk);	
 
-	#		print Dumper $packet;
-
-			if ($packet->{'type'} == 0) {
+			if ($packet->{'type'} == 0x01) {
 				common::debug(0, 'TRANSPARENT NOTIFICATION');
 			}
-			elsif ($packet->{'type'} == 1) {
+			elsif ($packet->{'type'} == 0x02) {
 				common::debug(0, 'SHIELDED NOTIFICATION');
 			}
-			elsif ($packet->{'type'} == 2) {
+			elsif ($packet->{'type'} == 0x03) {
 				common::debug(0, 'TRANSACTION CONFIRMATION');
 			}
-			elsif ($packet->{'type'} == 3) {
+			elsif ($packet->{'type'} == 0x04) {
 				common::debug(0, 'NODE ANNOUNCEMENT');
 			}
+			elsif ($packet->{'type'} == 0x05) {
+				common::debug(5, 'HEARTBEART');
+			}
+			else {
+				common::debug(0, 'UNKNOWN!');
+			}
+
 		}
 	}
 );
