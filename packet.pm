@@ -20,18 +20,25 @@ use Data::Dumper;			# debugging
 require './common.pm';			# common subs
 require './aes256.pm';			# AES encrypt/decrypt
 
-my $maxbytes = 16384;			# maximum packet size (websock server hard limit)
+my $maxbytes = 2048;			# maximum packet size (websock server hard limit)
+
+our $PKT_TRANSPARENT  = 0x01;
+our $PKT_SHIELDED     = 0x02;
+our $PKT_CONFIRMATION = 0x03;
+our $PKT_ANNOUNCE     = 0x04;
+
+our $PKT_VERSION      = 0x01;
 
 # TRANSPARENT TRANSCTION NOTIFICATION
 #
-# 	<type>		u8										('0x00' : type, '0x00' = mempool txn)
+# 	<type>		u8										('0x01' : type, '0x00' = mempool txn)
 # 	<version>	u8										('0x01' : version)
 # 	<txid>		32-bytes									(txid)
 # 	<taddr count>	uint32										(number of transparent outputs)
 # 	<taddr data>	<taddr_count> * (<amount 8-bytes> + <address 35-bytes>)				(transparent output data)
 
 # SHIELDED TRANSCTION NOTIFICATION
-# 	<type>		u8										('0x01' : type, '0x00' = mempool txn)
+# 	<type>		u8										('0x02' : type, '0x00' = mempool txn)
 # 	<version>	u8										('0x01' : version)
 # 	<txid>		32-bytes									(txid)
 # 	<zaddr count>	uint32										(number of shielded outputs)
@@ -39,14 +46,14 @@ my $maxbytes = 16384;			# maximum packet size (websock server hard limit)
 
 # TRANSACTION CONFIRMATIONS
 #
-#	<type>		u8										('0x02' : type, txn confirmation)
+#	<type>		u8										('0x03' : type, txn confirmation)
 #	<version>	u8										('0x01' : version)
 #	<txid count>	uint32										(number of txids)
 #	<txid data>	<count * 32-bytes>								(txids)
 
 # NODE ANNOUNCEMENT
 #
-#	<type>		u8										('0x03' : type, node service announcement)
+#	<type>		u8										('0x04' : type, node service announcement)
 #	<version>	u8										('0x01' : version)
 #	<fee>		uint32										(fee per block, in zats)
 #	<zaddr>		<78-bytes>									(node registration zaddr)
@@ -54,7 +61,6 @@ my $maxbytes = 16384;			# maximum packet size (websock server hard limit)
 #	<message>	<512-bytes>									(ascii text, null padded)
 
 
-my $version = 1;						# packet type version number
 my $debug   = 5;						# debug verbosity
 
 #######################################################################################################################################
@@ -70,7 +76,7 @@ sub parse {
 
 	use bytes;
 
-	if (unpack("C", substr($packet, 1, 1)) != $version) {	# version check
+	if (unpack("C", substr($packet, 1, 1)) != $PKT_VERSION) {	# version check
 
 		common::debug($debug, "packet::parse() : Cant decode version $data->{'version'}");
 		return(0);
@@ -78,11 +84,12 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	if ($data->{'type'} == 0x01) {				# TRANSPARENT TRANSACTIONS
-
+	# TESTED : THIS WORKS :-)
+	
+	if ($data->{'type'} == $PKT_TRANSPARENT) {				# TRANSPARENT TRANSACTIONS
+	
 		my $count = unpack("L", substr($packet,34,4));
-		print "packet::parse() : $count records\n";
-
+	
 		for ($i = 0; $i < $count; $i++) { 		
 			push @item, { 
 				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
@@ -90,68 +97,68 @@ sub parse {
 			};
 		}
 		$data->{'output'} = \@item;	
-
+	
 		return($data);		
 	}
 
-	#	elsif ($data->{'type'} == 0x02) {				# SHEILDED TRANSACTIONS
-	#
-	#		my @ciphertext = ();
-	#		my @plaintext = ();
-	#
-	#		$data->{'txid'} = unpack("H64", substr($packet,2,32));  	# get txid
-	#
-	#		for ($i = 0; $i < unpack("L", substr($packet,34,4)); $i++) { 	# ciphertext
-	#
-	#			my $encoded = substr($packet, (($i*544)+38), 544);	# - binary
-	#			push @ciphertext, unpack("H*", $encoded);		# - hex string
-	#			
-	#										# attempt decryption
-	#			my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), $encoded);	
-	#
-	#			if ($decrypted) {					# decryption success !!
-	#
-	#				my $value = hex(unpack("H*", substr($decrypted, 0, 8))),	# value (zats)
-	#				my $memo  = unpack("A*", substr($decrypted, 8));		# memo
-	#				$memo =~ s/\0//g;						# strip null-padding
-	#
-	#				push @plaintext, { value => $value, memo => $memo };		# store plaintext
-	#		}
-	#		}
-	#		if (scalar @plaintext > 0) {
-	#			$data->{'plaintext'}  = \@plaintext;			
-	#		}
-	#		$data->{'ciphertext'} = \@ciphertext;			
-	#
-	#		return($data);				
-	#	}
-	#
-	#	elsif ($data->{'type'} == 0x03) {				# TRANSACTION CONFIRMATION
-	#
-	#		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
-	#			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
-	#		}
-	#
-	#		$data->{'data'} = \@item;				
-	#		return($data);					
-	#	}
-	#
-	#	elsif ($data->{'type'} == 0x04) {				# NODE ANNOUNCEMENT
-	#
-	#		$data->{'fee'}     = unpack("L", substr($packet,2,4));		# monitoring fee (per block)
-	#		$data->{'address'} = unpack("A78", substr($packet,6,78));	# registration address
-	#		$data->{'status'}  = unpack("C", substr($packet,84,1));		# node status
-	#		$data->{'message'} = unpack("A512", substr($packet,85,512));	# text from node
-	#		$data->{'message'} =~ s/\0//g;					# remove null padding
-	#
-	#		return($data);
-	#	}
-	        elsif ($data->{'type'} = 0x05) {				# HEARTBEAT
-			common::debug(5, "packet::parse() : heartbeart");
-			$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
+	elsif ($data->{'type'} == $PKT_SHIELDED) {				# SHIELDED TRANSACTIONS
 
-			return($data);		
+		my @ciphertext = ();
+		my @plaintext = ();
+
+		$data->{'txid'} = unpack("H64", substr($packet,2,32));  	# get txid
+
+		for ($i = 0; $i < unpack("L", substr($packet,34,4)); $i++) { 	# ciphertext
+
+			my $encoded = substr($packet, (($i*544)+38), 544);	# - binary
+			push @ciphertext, unpack("H*", $encoded);		# - hex string
+			
+										# attempt decryption
+			my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), $encoded);	
+
+			if ($decrypted) {					# decryption success !!
+
+				my $value = hex(unpack("H*", substr($decrypted, 0, 8))),	# value (zats)
+				my $memo  = unpack("A*", substr($decrypted, 8));		# memo
+				$memo =~ s/\0//g;						# strip null-padding
+
+				push @plaintext, { value => $value, memo => $memo };		# store plaintext
+			}
 		}
+		if (scalar @plaintext > 0) {
+			$data->{'plaintext'}  = \@plaintext;			
+		}
+		$data->{'ciphertext'} = \@ciphertext;			
+
+		return($data);				
+	}
+
+	elsif ($data->{'type'} == $PKT_CONFIRMATION) {				# TRANSACTION CONFIRMATION
+	
+		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
+			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
+		}
+	
+		$data->{'data'} = \@item;				
+		return($data);					
+	}
+
+	elsif ($data->{'type'} == $PKT_ANNOUNCE) {				# NODE ANNOUNCEMENT
+	
+		$data->{'fee'}     = unpack("L", substr($packet,2,4));		# monitoring fee (per block)
+		$data->{'address'} = unpack("A78", substr($packet,6,78));	# registration address
+		$data->{'status'}  = unpack("C", substr($packet,84,1));		# node status
+		$data->{'message'} = unpack("A512", substr($packet,85,512));	# text from node
+		$data->{'message'} =~ s/\0//g;					# remove null padding
+
+		return($data);
+	}
+        elsif ($data->{'type'} = 0x05) {				# HEARTBEAT
+		common::debug(5, "packet::parse() : heartbeart");
+		$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
+
+		return($data);		
+	}
 
 								# if we get this far, we failed to parse it
 	common::debug($debug, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
@@ -172,9 +179,9 @@ sub generate {
 
 	my @packet;						# array of packets to send
 
-	my $header = pack("C1", $type) . pack("C1", $version);	# packet header
+	my $header = pack("C1", $type) . pack("C1", $PKT_VERSION);	# packet header
 
-	if ( $type == 0x01) {					# TRANSACTION NOTIFICATIONS (TADDR)
+	if ( $type == $PKT_TRANSPARENT) {					# TRANSACTION NOTIFICATIONS (TADDR)
 
 		my $data = '';
 		my $count = 0;
@@ -199,7 +206,7 @@ sub generate {
 		push @packet, encode_base64($header . pack("L", $count) . $data);		# remaining data into new packet
 	}	
 
-	elsif ( $type == 0x02 ) {				# TRANSACTION NOTIFICATIONS (ZADDR)
+	elsif ( $type == $PKT_SHIELDED ) {			# TRANSACTION NOTIFICATIONS (ZADDR)
 
 		my $data = '';
 		my $count = 0;
@@ -222,7 +229,7 @@ sub generate {
 		push @packet, encode_base64($header . pack("L", $count) . $data);		# remaining data into new packet
 	}	
 
-	elsif ($type == 0x03) {					# TRANSACTION CONFIRMATIONS
+	elsif ($type == $PKT_CONFIRMATION) {					# TRANSACTION CONFIRMATIONS
 
 		my $data = '';
 		my $count = 0;
@@ -246,7 +253,7 @@ sub generate {
 	}	
 
 
-	elsif ($type == 0x04) {					# NODE ANNOUNCEMENT 
+	elsif ($type == $PKT_ANNOUNCE) {					# NODE ANNOUNCEMENT 
 
        		$data = pack("C512", $data_raw[0]);		# 512-bytes, message
 		$data .= pack("L", $data_raw[1]);		# 4-bytes, zats per block

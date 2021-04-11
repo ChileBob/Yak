@@ -85,21 +85,24 @@ $client->on(							# websocket read
 
 			my $packet = packet::parse(decode_base64($buf), $testxfvk);	
 
-			if ($packet->{'type'} == 0x01) {
+			if ($packet->{'type'} == $packet::PKT_TRANSPARENT) {
 				common::debug(0, 'TRANSPARENT NOTIFICATION');
 				print Dumper $packet;
 			}
-			elsif ($packet->{'type'} == 0x02) {
+			elsif ($packet->{'type'} == $packet::PKT_SHIELDED) {
 				common::debug(0, 'SHIELDED NOTIFICATION');
+				print Dumper $packet;
 			}
-			elsif ($packet->{'type'} == 0x03) {
+			elsif ($packet->{'type'} == $packet::PKT_CONFIRMATION) {
 				common::debug(0, 'TRANSACTION CONFIRMATION');
+				print Dumper $packet;
 			}
-			elsif ($packet->{'type'} == 0x04) {
+			elsif ($packet->{'type'} == $packet::PKT_ANNOUNCE) {
 				common::debug(0, 'NODE ANNOUNCEMENT');
+				print Dumper $packet;
 			}
-			elsif ($packet->{'type'} == 0x05) {
-				common::debug(5, 'HEARTBEART');
+			elsif ($packet->{'type'} == $packet::PKT_HEARTBEAT) {
+				common::debug(0, 'HEARTBEART');
 			}
 			else {
 				common::debug(0, 'UNKNOWN!');

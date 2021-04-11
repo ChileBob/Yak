@@ -16,9 +16,9 @@ use Data::Dumper;
 use Digest::SHA qw(sha256);
 
 require './aes256.pm';
+require './packet.pm';
 
 my @pkt_hash;						# sha256 hashes of packets (prevents duplicates)
-
 my $client;						# connected clients
 
 $SIG{INT} = \&server_shutdown;				# graceful shutdown (not implemented)
@@ -40,7 +40,9 @@ Net::WebSocket::Server->new(				# setup websocket server
 				$serv->disconnect($dest->{'socket'})
 			}
 			else {
-				print "$client->{$dest}->{'ident'} : $client->{$dest}->{'rate'}\n";
+				if ($client->{$dest}->{'ident'}) {	# show number of packets received from each client
+					print "$client->{$dest}->{'ident'} : $client->{$dest}->{'rate'}\n";
+				}
 				$client->{$dest}->{'rate'} = 0;
 			}
 		}
