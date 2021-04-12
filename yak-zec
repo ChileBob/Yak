@@ -326,9 +326,11 @@ while ($running) {
 											# SEND TRANSACTION CONFIRMATIONS
                 my @data = ();								#
                 foreach my $txid (@{$block->{'tx'}}) {                                
-                    common::debug(0, "Confirming: $txid");                            
+                    common::debug(0, "$txid");                            
                     push @data, $txid;
                 }
+                common::debug(0, scalar @data . " txids confirmed\n");                            
+
                 push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data);	# add packets to buffer
             
 											########################################################

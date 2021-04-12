@@ -20,7 +20,7 @@ use Data::Dumper;			# debugging
 require './common.pm';			# common subs
 require './aes256.pm';			# AES encrypt/decrypt
 
-my $maxbytes = 2048;			# maximum packet size (websock server hard limit)
+my $maxbytes = 4096;			# maximum packet size (websock server hard limit is 16384)
 
 our $PKT_TRANSPARENT  = 0x01;
 our $PKT_SHIELDED     = 0x02;

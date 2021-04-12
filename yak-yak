@@ -40,7 +40,7 @@ Net::WebSocket::Server->new(				# setup websocket server
 				$serv->disconnect($dest->{'socket'})
 			}
 			else {
-				if ($client->{$dest}->{'ident'}) {	# show number of packets received from each client
+				if ($client->{$dest}->{'ident'} && $client->{$dest}->{'rate'} > 0) {	# show number of packets received from each client
 					print "$client->{$dest}->{'ident'} : $client->{$dest}->{'rate'}\n";
 				}
 				$client->{$dest}->{'rate'} = 0;
