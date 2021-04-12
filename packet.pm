@@ -8,24 +8,22 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-# TODO: generate() : receives arrayref of data in source format (strings, binary, etc), add conversions & enforce sizes etc
-
 package packet;
 			
-use Devel::Size qw(total_size);		# used to determine raw data size before generating packets
-use Convert::Base64;			# used to encode packets for transport
-use Digest::SHA qw(sha256);		# generates auth key included in shielded notification ciphertext
+use Devel::Size qw(total_size);										# used to determine raw data size before generating packets
+use Convert::Base64;											# used to encode packets for transport
+use Digest::SHA qw(sha256);										# generates auth key included in shielded notification ciphertext
 
-use Data::Dumper;			# debugging
+use Data::Dumper;											# debugging
 
-require './common.pm';			# common subs
-require './aes256.pm';			# AES encrypt/decrypt
+require './common.pm';											# common subs
+require './aes256.pm';											# AES encrypt/decrypt
 
-my $maxbytes = 4096;			# maximum packet size (websock server hard limit is 16384)
+my $maxbytes = 4096;											# maximum packet size (websock server hard limit is 16384)
 
-our $shielded_bytes = 576;		# length of ciphertext for shielded notifications, used to generate fakes
+our $shielded_bytes = 576;										# length of ciphertext for shielded notifications, used to generate fakes
 
-our $PKT_TRANSPARENT  = 0x01;		
+our $PKT_TRANSPARENT  = 0x01;										# packet types, used outside this package
 our $PKT_SHIELDED     = 0x02;
 our $PKT_CONFIRMATION = 0x03;
 our $PKT_ANNOUNCE     = 0x04;
@@ -64,8 +62,7 @@ our $PKT_VERSION      = 0x01;
 #	<status>	u8										(node stats, 1 = up)
 #	<message>	<512-bytes>									(ascii text, null padded)
 
-
-my $debug   = 5;						# debug verbosity
+my $debug   = 5;											# debug verbosity
 
 #######################################################################################################################################
 #
@@ -73,14 +70,14 @@ my $debug   = 5;						# debug verbosity
 #
 sub parse {
 
-	my ($packet, $xfvk) = @_;				# binary packet data, bech32 encoded xfvk
+	my ($packet, $xfvk) = @_;									# binary packet data, bech32 encoded xfvk
 
-	my $data;						# hash of update
-	my @item;						# array of objects
+	my $data;											# hash of update
+	my @item;											# array of objects
 
 	use bytes;
 
-	if (unpack("C", substr($packet, 1, 1)) != $PKT_VERSION) {	# version check
+	if (unpack("C", substr($packet, 1, 1)) != $PKT_VERSION) {					# version check
 
 		common::debug($debug, "packet::parse() : Cant decode version $data->{'version'}");
 		return(0);
@@ -88,13 +85,13 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	if ($data->{'type'} == $PKT_TRANSPARENT) {				# TRANSPARENT TRANSACTIONS (ZCASH)
+	if ($data->{'type'} == $PKT_TRANSPARENT) {							# TRANSPARENT TRANSACTIONS (ZCASH)
 	
-		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));	# txid
+		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));				# txid
 
-		my $count = unpack("L", substr($packet,34,4));			# count of transparent outputs
+		my $count = unpack("L", substr($packet,34,4));						# count of transparent outputs
 	
-		for ($i = 0; $i < $count; $i++) { 				# transparent outputs
+		for ($i = 0; $i < $count; $i++) { 							# transparent outputs
 			push @item, { 
 				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
 				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35))
@@ -105,35 +102,35 @@ sub parse {
 		return($data);		
 	}
 
-	elsif ($data->{'type'} == $PKT_SHIELDED) {				# SHIELDED TRANSACTIONS (ZCASH)
+	elsif ($data->{'type'} == $PKT_SHIELDED) {							# SHIELDED TRANSACTIONS (ZCASH)
 
 		my @ciphertext = ();
 		my @plaintext = ();
 
-		my $auth = unpack("H*", sha256(aes256::keyGen($xfvk)));		# plaintext auth : sha256(sha256(xfvk))
+		my $auth = unpack("H*", sha256(aes256::keyGen($xfvk)));					# plaintext auth : sha256(sha256(xfvk))
 
-		$data->{'txid'} = unpack("H64", substr($packet,2,32));  	# get txid
+		$data->{'txid'} = unpack("H64", substr($packet,2,32));  				# get txid
 
-		for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 	# loop through ciphertexts
+		for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 				# loop through ciphertexts
 
 			my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
 
-			if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {			# auth included in plaintext
+			if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {				# auth included in plaintext
 
-				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),	# value
-				my $memo = unpack("A*", substr($decrypted, 40));		# memo
-				$memo =~ s/\0//g;						# strip null-padding
-				push @plaintext, { value => $value, memo => $memo };		# store plaintext
+				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),		# value
+				my $memo = unpack("A*", substr($decrypted, 40));			# memo
+				$memo =~ s/\0//g;							# strip null-padding
+				push @plaintext, { value => $value, memo => $memo };			# store plaintext
 			}
 		}
 
-		if (scalar @plaintext > 0) {					# only return data if decryption worked
+		if (scalar @plaintext > 0) {								# only return data if decryption worked
 			$data->{'plaintext'}  = \@plaintext;			
 			return($data);				
 		}
 	}
 
-	elsif ($data->{'type'} == $PKT_CONFIRMATION) {				# TRANSACTION CONFIRMATION (ZCASH)
+	elsif ($data->{'type'} == $PKT_CONFIRMATION) {							# TRANSACTION CONFIRMATION (ZCASH)
 	
 		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
 			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
@@ -143,24 +140,24 @@ sub parse {
 		return($data);					
 	}
 
-	elsif ($data->{'type'} == $PKT_ANNOUNCE) {				# NODE ANNOUNCEMENT
+	elsif ($data->{'type'} == $PKT_ANNOUNCE) {							# NODE ANNOUNCEMENT
 	
-		$data->{'fee'}     = unpack("L", substr($packet,2,4));		# monitoring fee (per block)
-		$data->{'address'} = unpack("A78", substr($packet,6,78));	# registration address
-		$data->{'status'}  = unpack("C", substr($packet,84,1));		# node status
-		$data->{'message'} = unpack("A512", substr($packet,85,512));	# text from node
-		$data->{'message'} =~ s/\0//g;					# remove null padding
+		$data->{'fee'}     = unpack("L", substr($packet,2,4));					# monitoring fee (per block)
+		$data->{'address'} = unpack("A78", substr($packet,6,78));				# registration address
+		$data->{'status'}  = unpack("C", substr($packet,84,1));					# node status
+		$data->{'message'} = unpack("A512", substr($packet,85,512));				# text from node
+		$data->{'message'} =~ s/\0//g;								# remove null padding
 
 		return($data);
 	}
 
-        elsif ($data->{'type'} = $PKT_HEARTBEAT) {				# HEARTBEAT
+        elsif ($data->{'type'} = $PKT_HEARTBEAT) {							# HEARTBEAT
 		common::debug(5, "packet::parse() : heartbeart");
 		$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
 
 		return($data);		
 	}
-										# if we get this far, we failed to parse 
+													# if we get this far, we failed to parse 
 	common::debug($debug, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
 }
 
@@ -171,22 +168,22 @@ sub parse {
 #
 sub generate {
 
-	my ($type, $data) = @_;							# type, binary data
+	my ($type, $data) = @_;										# type, binary data
 
-	my @data_raw = @{$data};						# de-reference data, easier to handle
+	my @data_raw = @{$data};									# de-reference data, easier to handle
 
-	my @packet;								# array of packets to send
+	my @packet;											# array of packets to send
 
-	my $header = pack("C1", $type) . pack("C1", $PKT_VERSION);		# packet header
+	my $header = pack("C1", $type) . pack("C1", $PKT_VERSION);					# packet header
 
-	if ( $type == $PKT_TRANSPARENT) {					# TRANSACTION NOTIFICATIONS (TADDR)
+	if ( $type == $PKT_TRANSPARENT) {								# TRANSACTION NOTIFICATIONS (TADDR)
 
 		my $data = '';
 		my $count = 0;
 
-		$header .= pack("H64", $data_raw[0]);				# add txid to header 
+		$header .= pack("H64", $data_raw[0]);							# add txid to header 
 
-		foreach my $txn (splice(@data_raw, 1) ) {			# value, address
+		foreach my $txn (splice(@data_raw, 1) ) {						# value, address
 			
 			my $raw = pack("H*", sprintf("%016X", $txn->{'value'})) . pack("A35", $txn->{'address'});
 
@@ -194,45 +191,45 @@ sub generate {
 				$count++;
 				$data .= $raw;
 			}
-			else  {							# max size, add packet to array & start another
+			else  {										# max size, add packet to array & start another
 				push @packet, encode_base64($header . pack("L", $count) . $data);
 
-				$data = $raw;					# start a new packet
+				$data = $raw;								# start a new packet
 				$count = 1;
 			}
 		}
-		push @packet, encode_base64($header . pack("L", $count) . $data);		# remaining data into new packet
+		push @packet, encode_base64($header . pack("L", $count) . $data);			# remaining data into new packet
 	}	
 
-	elsif ( $type == $PKT_SHIELDED ) {					# TRANSACTION NOTIFICATIONS (ZADDR)
+	elsif ( $type == $PKT_SHIELDED ) {								# TRANSACTION NOTIFICATIONS (ZADDR)
 
 		my $data = '';
 		my $count = 0;
 
-		$header .= pack("H64", $data_raw[0]);				# add txid to header 
+		$header .= pack("H64", $data_raw[0]);							# add txid to header 
 
-		foreach my $txn (splice(@data_raw, 1)) {			# value, address
+		foreach my $txn (splice(@data_raw, 1)) {						# value, address
 			
 			if (base64_bytes(length($header) + 4 + length($data) + length($txn)) < $maxbytes) {	
 				$count++;
 				$data .= $txn;
 			}
-			else  {							# max size, add packet to array & start another
+			else  {										# max size, add packet to array & start another
 				push @packet, encode_base64($header . pack("L", $count) . $data);
 
-				$data = $txn;					# start a new packet
+				$data = $txn;								# start a new packet
 				$count = 1;
 			}
 		}
-		push @packet, encode_base64($header . pack("L", $count) . $data)	# remaining data into new packet
+		push @packet, encode_base64($header . pack("L", $count) . $data)			# remaining data into new packet
 	}	
 
-	elsif ($type == $PKT_CONFIRMATION) {					# TRANSACTION CONFIRMATIONS
+	elsif ($type == $PKT_CONFIRMATION) {								# TRANSACTION CONFIRMATIONS
 
 		my $data = '';
 		my $count = 0;
 
-		foreach my $txid (@data_raw) {					# txid, hex-encode string
+		foreach my $txid (@data_raw) {								# txid, hex-encode string
 			
 			my $raw = pack("H64", $txid);
 
@@ -240,39 +237,39 @@ sub generate {
 				$count++;
 				$data .= $raw;
 			}
-			else  {							# packet is max size, add to array
+			else  {										# packet is max size, add to array
 				push @packet, encode_base64($header . pack("L", $count) . $data);
 
-				$data = $raw;					# start a new packet
+				$data = $raw;								# start a new packet
 				$count = 1;
 			}
 		}
-		push @packet, encode_base64($header . pack("L", $count) . $data);	# remaining data into new packet
+		push @packet, encode_base64($header . pack("L", $count) . $data);			# remaining data into new packet
 	}	
 
 
-	elsif ($type == $PKT_ANNOUNCE) {					# NODE ANNOUNCEMENT 
+	elsif ($type == $PKT_ANNOUNCE) {								# NODE ANNOUNCEMENT 
 
-       		$data = pack("C512", $data_raw[0]);				# 512-bytes, message
-		$data .= pack("L", $data_raw[1]);				# 4-bytes, zats per block
-		$data .= pack("A78", $data_raw[2]);				# registration address
-		$data .= pack("C1", $data_raw[3]);				# 1-byte, status
+       		$data = pack("C512", $data_raw[0]);							# 512-bytes, message
+		$data .= pack("L", $data_raw[1]);							# 4-bytes, zats per block
+		$data .= pack("A78", $data_raw[2]);							# registration address
+		$data .= pack("C1", $data_raw[3]);							# 1-byte, status
 
-		push @packet, encode_base64($header . $data);			# create packet
+		push @packet, encode_base64($header . $data);						# create packet
 	}	
 
-	elsif ($type == $PKT_HEARTBEAT) {					# HEARTBEAT
+	elsif ($type == $PKT_HEARTBEAT) {								# HEARTBEAT
 
-		push @packet, encode_base64($header);				# create packet
+		push @packet, encode_base64($header);							# create packet
 	}
 
-	return(@packet);							# return of base64 encoded packets
+	return(@packet);										# return of base64 encoded packets
 }
 
 
 #######################################################################################################################################
 #
-# calculate length of base64 encoded data given the raw length in bytes
+# calculate length of base64 encoded data from data length in bytes
 #
 sub base64_bytes {
 
@@ -284,4 +281,4 @@ sub base64_bytes {
 	return( $groups + ($groups % 2) + ($bits % 6) );
 }
 
-1;	# all packages are true, even those that dont work properly
+1;													# all packages are true, even those that dont work properly
