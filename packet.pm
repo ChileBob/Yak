@@ -26,6 +26,7 @@ our $PKT_TRANSPARENT  = 0x01;
 our $PKT_SHIELDED     = 0x02;
 our $PKT_CONFIRMATION = 0x03;
 our $PKT_ANNOUNCE     = 0x04;
+our $PKT_HEARTBEAT    = 0x05;
 
 our $PKT_VERSION      = 0x01;
 
@@ -138,7 +139,7 @@ sub parse {
 		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
 			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
 		}
-	
+
 		$data->{'data'} = \@item;				
 		return($data);					
 	}
@@ -153,14 +154,14 @@ sub parse {
 
 		return($data);
 	}
-        elsif ($data->{'type'} = 0x05) {				# HEARTBEAT
+
+        elsif ($data->{'type'} = $PKT_HEARTBEAT) {				# HEARTBEAT
 		common::debug(5, "packet::parse() : heartbeart");
 		$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
 
 		return($data);		
 	}
-
-								# if we get this far, we failed to parse it
+										# if we get this far, we failed to parse 
 	common::debug($debug, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
 }
 
@@ -171,24 +172,22 @@ sub parse {
 #
 sub generate {
 
-# TODO: return arrayref of packets less than maxbytes when base64 encoded
-	
-	my ($type, $data, $xfvk) = @_;				# type, binary data, viewkey
+	my ($type, $data, $xfvk) = @_;						# type, binary data, viewkey
 
-	my @data_raw = @{$data};				# de-reference data, easier to handle
+	my @data_raw = @{$data};						# de-reference data, easier to handle
 
-	my @packet;						# array of packets to send
+	my @packet;								# array of packets to send
 
-	my $header = pack("C1", $type) . pack("C1", $PKT_VERSION);	# packet header
+	my $header = pack("C1", $type) . pack("C1", $PKT_VERSION);		# packet header
 
 	if ( $type == $PKT_TRANSPARENT) {					# TRANSACTION NOTIFICATIONS (TADDR)
 
 		my $data = '';
 		my $count = 0;
 
-		$header .= pack("H64", $data_raw[0]);		# add txid to header 
+		$header .= pack("H64", $data_raw[0]);				# add txid to header 
 
-		foreach my $txn (splice(@data_raw, 1) ) {	# value, address
+		foreach my $txn (splice(@data_raw, 1) ) {			# value, address
 			
 			my $raw = pack("H*", sprintf("%016X", $txn->{'value'})) . pack("A35", $txn->{'address'});
 
@@ -196,37 +195,37 @@ sub generate {
 				$count++;
 				$data .= $raw;
 			}
-			else  {					# max size, add packet to array & start another
+			else  {							# max size, add packet to array & start another
 				push @packet, encode_base64($header . pack("L", $count) . $data);
 
-				$data = $raw;			# start a new packet
+				$data = $raw;					# start a new packet
 				$count = 1;
 			}
 		}
 		push @packet, encode_base64($header . pack("L", $count) . $data);		# remaining data into new packet
 	}	
 
-	elsif ( $type == $PKT_SHIELDED ) {			# TRANSACTION NOTIFICATIONS (ZADDR)
+	elsif ( $type == $PKT_SHIELDED ) {					# TRANSACTION NOTIFICATIONS (ZADDR)
 
 		my $data = '';
 		my $count = 0;
 
-		$header .= pack("H64", $data_raw[0]);		# add txid to header 
+		$header .= pack("H64", $data_raw[0]);				# add txid to header 
 
-		foreach my $txn (splice(@data_raw, 1)) {	# value, address
+		foreach my $txn (splice(@data_raw, 1)) {			# value, address
 			
 			if (base64_bytes(length($header) + 4 + length($data) + length($txn)) < $maxbytes) {	
 				$count++;
 				$data .= $txn;
 			}
-			else  {					# max size, add packet to array & start another
+			else  {							# max size, add packet to array & start another
 				push @packet, encode_base64($header . pack("L", $count) . $data);
 
-				$data = $txn;			# start a new packet
+				$data = $txn;					# start a new packet
 				$count = 1;
 			}
 		}
-		push @packet, encode_base64($header . pack("L", $count) . $data);		# remaining data into new packet
+		push @packet, encode_base64($header . pack("L", $count) . $data)	# remaining data into new packet
 	}	
 
 	elsif ($type == $PKT_CONFIRMATION) {					# TRANSACTION CONFIRMATIONS
@@ -234,7 +233,7 @@ sub generate {
 		my $data = '';
 		my $count = 0;
 
-		foreach my $txid (@data_raw) {			# txid, hex-encode string
+		foreach my $txid (@data_raw) {					# txid, hex-encode string
 			
 			my $raw = pack("H64", $txid);
 
@@ -242,33 +241,33 @@ sub generate {
 				$count++;
 				$data .= $raw;
 			}
-			else  {					# packet is max size, add to array
-				push @packet, encode_base64($header . $data);
+			else  {							# packet is max size, add to array
+				push @packet, encode_base64($header . pack("L", $count) . $data);
 
-				$data = $raw;			# start a new packet
+				$data = $raw;					# start a new packet
 				$count = 1;
 			}
 		}
-		push @packet, encode_base64($header . $data);	# remaining data into new packet
+		push @packet, encode_base64($header . pack("L", $count) . $data);	# remaining data into new packet
 	}	
 
 
 	elsif ($type == $PKT_ANNOUNCE) {					# NODE ANNOUNCEMENT 
 
-       		$data = pack("C512", $data_raw[0]);		# 512-bytes, message
-		$data .= pack("L", $data_raw[1]);		# 4-bytes, zats per block
-		$data .= pack("A78", $data_raw[2]);		# registration address
-		$data .= pack("C1", $data_raw[3]);		# 1-byte, status
+       		$data = pack("C512", $data_raw[0]);				# 512-bytes, message
+		$data .= pack("L", $data_raw[1]);				# 4-bytes, zats per block
+		$data .= pack("A78", $data_raw[2]);				# registration address
+		$data .= pack("C1", $data_raw[3]);				# 1-byte, status
 
-		push @packet, encode_base64($header . $data);	# create packet
+		push @packet, encode_base64($header . $data);			# create packet
 	}	
 
-	elsif ($type == 0x05) {					# HEARTBEAT
+	elsif ($type == $PKT_HEARTBEAT) {					# HEARTBEAT
 
-		push @packet, encode_base64($header);		# create packet
+		push @packet, encode_base64($header);				# create packet
 	}
 
-	return(@packet);					# return of base64 encoded packets
+	return(@packet);							# return of base64 encoded packets
 }
 
 
