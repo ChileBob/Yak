@@ -23,8 +23,11 @@ my $maxbytes = 4096;											# maximum packet size (websock server hard limit 
 
 our $shielded_bytes = 576;										# length of ciphertext for shielded notifications, used to generate fakes
 
+# ZCASH TRANSACTION TYPES
+#
 our $PKT_TRANSPARENT  = 0x01;										# packet types, used outside this package
 our $PKT_SHIELDED     = 0x02;
+
 our $PKT_CONFIRMATION = 0x03;
 our $PKT_ANNOUNCE     = 0x04;
 our $PKT_HEARTBEAT    = 0x05;
@@ -94,7 +97,8 @@ sub parse {
 		for ($i = 0; $i < $count; $i++) { 							# transparent outputs
 			push @item, { 
 				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
-				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35))
+				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35)),
+				coin =>  'ZEC'
 			};
 		}
 		$data->{'output'} = \@item;	
@@ -120,7 +124,7 @@ sub parse {
 				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),		# value
 				my $memo = unpack("A*", substr($decrypted, 40));			# memo
 				$memo =~ s/\0//g;							# strip null-padding
-				push @plaintext, { value => $value, memo => $memo };			# store plaintext
+				push @plaintext, { value => $value, memo => $memo, coin => 'ZEC' };	# store plaintext
 			}
 		}
 
