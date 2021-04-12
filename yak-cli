@@ -28,6 +28,7 @@ my $config = { 						# DEFAULT CONFIGURATION
 	ident   => aes256::keyRandom(32, 'A'),		# create a new random client ident
 	auth    => 'changethispassword',		# password to bypass yak-yak rate limit
 	web 	=> 'ws://127.0.0.1:8834',		# websocket server 
+	uri     => '',					# URL to post transaction
 	debug => 5					# debug verbosity
 };
 
@@ -110,7 +111,13 @@ $client->on(											# websocket read
 						memo => $note->{'memo'}, 
 						conf => 0
 					};
+												# trigger website & send data
+												
+					common::website_post($config->{'uri'}, { txid => $packet->{'txid'}, value => $note->{'value'}, memo => $note->{'memo'}, conf => 0 } );
+
 					print Dumper $txn->{$packet->{'txid'}};			# display transaction
+
+					# TODO: Trigger web URI (if set)
 				}
 
 			}
@@ -125,6 +132,9 @@ $client->on(											# websocket read
 
 						common::debug(0, "CONFIRMATION : $tx");		# report confirmation
 						print Dumper $txn->{$tx};
+
+						common::website_post($config->{'uri'}, { txid => $tx, value => $txn->{$tx}->{'value'}, memo => $txn->{$tx}->{'memo'}, conf => 1 } );
+						
 						last TXID;
 					}
 				}
@@ -166,8 +176,6 @@ while ($running) {
 	usleep 100_00;										# lets not beat up the server, take a nap
 }
 
-common::debug(0, "Bye!");
-
+common::debug(0, "Bye!");									# don't forget your hat
 exit;
-
 

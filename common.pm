@@ -9,7 +9,9 @@
 
 package common;
 
-my $debug = 5;			# global debug verbosity, 0 = quiet
+use LWP::UserAgent;					# used to POST transaction alerts to URI
+
+my $debug = 5;						# global debug verbosity, 0 = quiet
 
 #########################################################################################################################################################################
 #
@@ -34,7 +36,7 @@ sub uri_split {
 
 	my ($uri) = @_;
 
-	$uri =~ s/\///g;		# remove '/'
+	$uri =~ s/\///g;				# remove '/'
 	my @parts = split(":",$uri);
 
 	return(@parts);
@@ -49,11 +51,11 @@ sub parse_argv {
 
 	my ($config, $argv) = @_;
 
-	my @argv = @{$argv};			# dereference array of args
+	my @argv = @{$argv};				# dereference array of args
 
-	while (my $arg = shift @argv) {		# loop through args
+	while (my $arg = shift @argv) {			# loop through args
 
-						# key from by pattern matching value
+							# key from by pattern matching value
 		if ($arg =~ m/^web/) {			# websocket server 
 			$config->{'web'} = $arg;
 		}
@@ -63,16 +65,34 @@ sub parse_argv {
 		elsif ($arg =~ m/^uri/) {		# URI to post events
 			$config->{'uri'} = $arg;
 		}
-						# key followed by value
+							# key followed by value
 		for my $keyword ('ident', 'auth', 'xfvk', 'ivk') {
 			if ($arg eq $keyword) {	
 				$config->{$keyword} = shift @argv;
 			}
 		}
 	}
-	return($config);			# return config hash
+	return($config);				# return config hash
 };
 
 
-1;	# all packages are true, especially the ones that are not
+
+#########################################################################################################################################################################
+#
+# POST data to a URI for website integration. You can test this by visiting https://ptsv2.com and setting up a URI to post data to.
+#
+sub website_post {
+
+	my ($uri, $data) = @_;
+
+	if ($uri) {					# skip it if the URI is not set
+
+		my $browser = LWP::UserAgent->new;
+
+		return( $browser->post( $uri, [ $data ] ) );
+	}
+}
+
+
+1;							# all packages are true, especially the ones that are not
 
