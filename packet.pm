@@ -25,7 +25,7 @@ my $maxbytes = 4096;			# maximum packet size (websock server hard limit is 16384
 
 our $shielded_bytes = 576;		# length of ciphertext for shielded notifications, used to generate fakes
 
-our $PKT_TRANSPARENT  = 0x01;
+our $PKT_TRANSPARENT  = 0x01;		
 our $PKT_SHIELDED     = 0x02;
 our $PKT_CONFIRMATION = 0x03;
 our $PKT_ANNOUNCE     = 0x04;
@@ -88,7 +88,7 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	if ($data->{'type'} == $PKT_TRANSPARENT) {				# TRANSPARENT TRANSACTIONS
+	if ($data->{'type'} == $PKT_TRANSPARENT) {				# TRANSPARENT TRANSACTIONS (ZCASH)
 	
 		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));	# txid
 
@@ -105,7 +105,7 @@ sub parse {
 		return($data);		
 	}
 
-	elsif ($data->{'type'} == $PKT_SHIELDED) {				# SHIELDED TRANSACTIONS
+	elsif ($data->{'type'} == $PKT_SHIELDED) {				# SHIELDED TRANSACTIONS (ZCASH)
 
 		my @ciphertext = ();
 		my @plaintext = ();
@@ -120,8 +120,8 @@ sub parse {
 
 			if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {			# auth included in plaintext
 
-				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),	# value (zats)
-				my $memo  = unpack("A*", substr($decrypted, 40));		# memo
+				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),	# value
+				my $memo = unpack("A*", substr($decrypted, 40));		# memo
 				$memo =~ s/\0//g;						# strip null-padding
 				push @plaintext, { value => $value, memo => $memo };		# store plaintext
 			}
@@ -133,7 +133,7 @@ sub parse {
 		}
 	}
 
-	elsif ($data->{'type'} == $PKT_CONFIRMATION) {				# TRANSACTION CONFIRMATION
+	elsif ($data->{'type'} == $PKT_CONFIRMATION) {				# TRANSACTION CONFIRMATION (ZCASH)
 	
 		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
 			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
