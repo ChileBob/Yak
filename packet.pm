@@ -14,6 +14,7 @@ package packet;
 			
 use Devel::Size qw(total_size);		# used to determine raw data size before generating packets
 use Convert::Base64;			# used to encode packets for transport
+use Digest::SHA qw(sha256);		# generates auth key included in shielded notification ciphertext
 
 use Data::Dumper;			# debugging
 
@@ -21,6 +22,8 @@ require './common.pm';			# common subs
 require './aes256.pm';			# AES encrypt/decrypt
 
 my $maxbytes = 4096;			# maximum packet size (websock server hard limit is 16384)
+
+our $shielded_bytes = 576;		# length of ciphertext for shielded notifications, used to generate fakes
 
 our $PKT_TRANSPARENT  = 0x01;
 our $PKT_SHIELDED     = 0x02;
@@ -43,7 +46,7 @@ our $PKT_VERSION      = 0x01;
 # 	<version>	u8										('0x01' : version)
 # 	<txid>		32-bytes									(txid)
 # 	<zaddr count>	uint32										(number of shielded outputs)
-#	<zaddr data>	<zaddr_count> * <ciphertext 544-bytes>						(shielded output ciphertext : AES256)
+#	<zaddr data>	<zaddr_count> * <ciphertext 583-bytes>						(shielded output ciphertext : AES256)
 
 # TRANSACTION CONFIRMATIONS
 #
@@ -85,13 +88,13 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	# TESTED : THIS WORKS :-)
-	
 	if ($data->{'type'} == $PKT_TRANSPARENT) {				# TRANSPARENT TRANSACTIONS
 	
-		my $count = unpack("L", substr($packet,34,4));
+		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));	# txid
+
+		my $count = unpack("L", substr($packet,34,4));			# count of transparent outputs
 	
-		for ($i = 0; $i < $count; $i++) { 		
+		for ($i = 0; $i < $count; $i++) { 				# transparent outputs
 			push @item, { 
 				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
 				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35))
@@ -107,31 +110,27 @@ sub parse {
 		my @ciphertext = ();
 		my @plaintext = ();
 
+		my $auth = unpack("H*", sha256(aes256::keyGen($xfvk)));		# plaintext auth : sha256(sha256(xfvk))
+
 		$data->{'txid'} = unpack("H64", substr($packet,2,32));  	# get txid
 
-		for ($i = 0; $i < unpack("L", substr($packet,34,4)); $i++) { 	# ciphertext
+		for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 	# loop through ciphertexts
 
-			my $encoded = substr($packet, (($i*544)+38), 544);	# - binary
-			push @ciphertext, unpack("H*", $encoded);		# - hex string
-			
-										# attempt decryption
-			my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), $encoded);	
+			my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
 
-			if ($decrypted) {					# decryption success !!
+			if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {			# auth included in plaintext
 
-				my $value = hex(unpack("H*", substr($decrypted, 0, 8))),	# value (zats)
-				my $memo  = unpack("A*", substr($decrypted, 8));		# memo
+				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),	# value (zats)
+				my $memo  = unpack("A*", substr($decrypted, 40));		# memo
 				$memo =~ s/\0//g;						# strip null-padding
-
 				push @plaintext, { value => $value, memo => $memo };		# store plaintext
 			}
 		}
-		if (scalar @plaintext > 0) {
-			$data->{'plaintext'}  = \@plaintext;			
-		}
-		$data->{'ciphertext'} = \@ciphertext;			
 
-		return($data);				
+		if (scalar @plaintext > 0) {					# only return data if decryption worked
+			$data->{'plaintext'}  = \@plaintext;			
+			return($data);				
+		}
 	}
 
 	elsif ($data->{'type'} == $PKT_CONFIRMATION) {				# TRANSACTION CONFIRMATION
@@ -172,7 +171,7 @@ sub parse {
 #
 sub generate {
 
-	my ($type, $data, $xfvk) = @_;						# type, binary data, viewkey
+	my ($type, $data) = @_;							# type, binary data
 
 	my @data_raw = @{$data};						# de-reference data, easier to handle
 

@@ -98,7 +98,7 @@ sub keyRandom {
 		@chars = ('a'..'f', '0'..'9');				# default key type : lower case hex string
 	}
 
-	if ($key_length eq "") {					# default key length is 64 chars
+	if ($key_length eq "") {					# default key length is 64 chars, which is 32 bytes
 		$key_length = 64;
 	}
 

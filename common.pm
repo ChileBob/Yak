@@ -40,5 +40,39 @@ sub uri_split {
 	return(@parts);
 }
 
+
+#########################################################################################################################################################################
+#
+# parse command line args & return modified config hash
+#
+sub parse_argv {
+
+	my ($config, $argv) = @_;
+
+	my @argv = @{$argv};			# dereference array of args
+
+	while (my $arg = shift @argv) {		# loop through args
+
+						# key from by pattern matching value
+		if ($arg =~ m/^web/) {			# websocket server 
+			$config->{'web'} = $arg;
+		}
+		elsif ($arg =~ m/^zmq/) {		# ZMQ connection
+			$config->{'zmq'} = $arg;
+		}
+		elsif ($arg =~ m/^uri/) {		# URI to post events
+			$config->{'uri'} = $arg;
+		}
+						# key followed by value
+		for my $keyword ('ident', 'auth', 'xfvk', 'ivk') {
+			if ($arg eq $keyword) {	
+				$config->{$keyword} = shift @argv;
+			}
+		}
+	}
+	return($config);			# return config hash
+};
+
+
 1;	# all packages are true, especially the ones that are not
 

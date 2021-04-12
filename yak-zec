@@ -12,10 +12,6 @@
 
 # ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
 # ISSUE: The payment address cannot be derived from an IVK, so maybe not.
-#
-# BUG: Large transactions can exceed the max websocket limits
-# - break into sections
-# - add sections to outbound spool
 
 #########################################################################################################################################################################
 #
@@ -36,6 +32,7 @@ use String::HexConvert ':all';							# convert hex-encoded strings to ascii
 use FFI::Platypus;								# FFI interface to librustzcash
 use FFI::Platypus::Buffer qw( scalar_to_buffer);				# 
 use FFI::Platypus::Memory qw( malloc memcpy free);				# 
+use Digest::SHA qw(sha256);							# generates authentication to include in ciphertext
 
 										########################################################
 										# ChileBob Packages
@@ -45,8 +42,6 @@ require './bech32.pm';								# bech32 encode/decode
 require './aes256.pm';								# AES256 encrypt/decrypt
 require './packet.pm';								# yak packet generation/parsing
 
-
-										########################################################
 my $config = {									# DEFAULT CONFIGURATION
 
     nodename => 'ChileBobs Yak Node',						# name/message for announcements
@@ -55,7 +50,7 @@ my $config = {									# DEFAULT CONFIGURATION
     timer_count => 0,								# interval timer count
     client_ident => aes256::keyRandom(32,'A'),					# client ident, randomised on startup
     client_auth => 'changethispassword',					# client password, bypasses yak-yak rate limit
-    debug => 5,									# debugging output level
+    debug => 0,									# debugging output level
     node_client => 'zcash-cli',							# fullnode client binary
     zmq => 'tcp://127.0.0.1:28232',						# fullnode zmq
     web => 'ws://127.0.0.1:8834',						# websocket server
@@ -63,7 +58,8 @@ my $config = {									# DEFAULT CONFIGURATION
     xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn'
 };
 
-# TODO: process command line to over-ride default config
+$config = common::parse_argv($config, \@ARGV);					# modify config from command line args
+
 # TODO: show help, command line args & exit
 
 
@@ -105,7 +101,6 @@ my $ctx = ZMQ::FFI->new();							#
 my $zmq_socket = $ctx->socket(ZMQ_SUB);						# 
 $zmq_socket->connect($config->{'zmq'});						# 
 $zmq_socket->subscribe('');							 
-
 										########################################################
 										# WEBSOCKET CLIENT
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});	# 
@@ -156,7 +151,6 @@ $client->connect;								# start websocket client
 sleep(2);									# give yak-yak a little time to setup
 $client->write("BASE64:$config->{'client_ident'}:$config->{'client_auth'}");	# subscribe for BASE64 transport, send ident & auth
 
-
 										########################################################
 										# FULLNODE RPC 
 										#
@@ -196,9 +190,6 @@ foreach my $txn ( @{$txn_reg} ) {						# loop through transactions to registrati
     }
 }
 
-
-
-
 										########################################################
 										# MAIN LOOP
 										#
@@ -230,7 +221,10 @@ while ($running) {
         }
 
 
-        $config->{'timer_count'}--;						# interval timer
+										########################################################
+										# interval timer
+										#
+        $config->{'timer_count'}--;
         if ($config->{'timer_count'} <= 0) {    
             $config->{'timer_count'} = $config->{'timer_reset'};
 
@@ -242,10 +236,13 @@ while ($running) {
             else {
                 push @announce, 0;
             }
-            push @packet, packet::generate($packet::PKT_ANNOUNCE, \@announce, '');		# add packet to buffer
+            push @packet, packet::generate($packet::PKT_ANNOUNCE, \@announce);			# add packet to buffer
         }
 
-        while ($zmq_socket->has_pollin) {							# anything on ZMQ ?
+										########################################################
+										# read fullnode ZMQ
+										#
+        while ($zmq_socket->has_pollin) {					
     
             my @zmq_parts = $zmq_socket->recv_multipart();					# read ZMQ
     
@@ -267,25 +264,27 @@ while ($running) {
                     push @packet, packet::generate($packet::PKT_TRANSPARENT, \@data);		# add packet(s) to buffer
                 }
     
-    
+												########################################
                 my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};				# SHIELDED TRANSACTIONS
+
                 if (scalar @vShieldedOutput > 0) {
     
                     my @data = ( $txn->{'txid'} );						# txid is the first record
     
                     OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {			# loop through all shielded outputs
             
+
                         VIEWKEY: foreach my $xfvk (@viewkey) {					# loop through all viewkeys
             
                             my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
-            
+
                             if ($result->{'status'} == 1) {					# decrypted !!! Wooooo!!!! 
             
                                 my $value = hex(unpack("H*", $result->{'value'}));		# convert value from 8-bytes into something more useful
                                 my $memo  = unpack("A*", $result->{'memo'});			# convert memo to ascii & strip null padding
                                 $memo =~ s/\0//g;
             
-                                if ($xfvk eq $viewkey[0]) {					# sent to our registration address ?
+                                if ($xfvk eq $viewkey[0]) {					# if this decrypted with our registration viewkey, then its ours
                             
                                     my @line = split("\n", $memo);				# memo can be multiline, we have no control on format 
             
@@ -293,70 +292,70 @@ while ($running) {
             
                                         $line = xfvk_check($line);				# check for a valid ExtendedFullViewingKey
                                         if ($line) {
-                                            
                                             common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
                                             push(@viewkey, $line);				# append viewkey to monitored array
                                             $viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};		# append expiry blocknumber
                                             last MEMOLINE;                
                                         }
                                     }
-                                    # TODO : Send packet with gibberish data to hide that we decoded a registration, otherwise we leak privacy through inaction
+                                    push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	# generate fake output so we dont leak privacy
                                 }
-                                else {								# monitored viewkey
+
+                                else {										# woo!! we decrypted an output for a monitored viewkey
                                     common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-                                    push @packet, packet::generate($packet::PKT_SHIELDED, aes256::encrypt(aes256::keyGen($xfvk), $result->{'value'} . $result->{'memo'}));
+                                    push @data, aes256::encrypt(aes256::keyGen($xfvk), sha256(aes256::keyGen($xfvk)) . $result->{'value'} . $result->{'memo'}, $xfvk);
                                 }
+
                             last VIEWKEY;        
                             }
-                            # TODO : Send packet with gibberish data to hide that we couldn't decode, otherwise we leak privacy through inaction
+                            push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	# decrypt failed, create fake shielded output so we dont leak privacy
                         }
                     }
+                    push @packet, packet::generate( $packet::PKT_SHIELDED, \@data );			# generate packets
                 }
             }
         
-											########################################################
-											# NEW BLOCK
-											#	
+												########################################################
+												# NEW BLOCK
+												#	
             elsif ($zmq_parts[0] eq 'hashblock') {					
                     
                 $block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');	# update block, abort on failure
-    
 
-											########################################################
-											# SEND TRANSACTION CONFIRMATIONS
-                my @data = ();								#
+												########################################
+												# SEND TRANSACTION CONFIRMATIONS
+                my @data = ();									#
                 foreach my $txid (@{$block->{'tx'}}) {                                
                     common::debug(0, "$txid");                            
                     push @data, $txid;
                 }
                 common::debug(0, scalar @data . " txids confirmed\n");                            
-
-                push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data);	# add packets to buffer
+                push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data);		# add packets to buffer
             
-											########################################################
-											# CHECK MONITORED VIEWKEY EXPIRY
-											#
-                my @validkeys = ( $config->{'xfvk'} );					# remove expired viewkeys from monitoring
-                foreach my $key (keys %viewkey_expiry) {                                 
-                    if ($viewkey_expiry{$key} >= $block->{'height'}) {			# not this one, its still good
+												########################################################
+												# CHECK MONITORED VIEWKEY EXPIRY
+												#
+                my @validkeys = ( $config->{'xfvk'} );						# remove expired viewkeys from monitoring
+                foreach my $key (keys %viewkey_expiry) {                               		  
+                    if ($viewkey_expiry{$key} >= $block->{'height'}) {				# not this one, its still good
                         push(@validkeys, $key);                                   
                     }
-                    else {								# but this one can go
+                    else {									# but this one can go
                         common::debug($config->{'debug'}, "Key Expired : $key");
                         delete $viewkey_expiry{$key};
                     }
                 }
-                @viewkey = @validkeys;							# replace array of monitored viewkeys
+                @viewkey = @validkeys;								# replace array of monitored viewkeys
             }
         }
 
-	if (scalar @packet == 0) {							# still nothing to do ? have a longer nap
+	if (scalar @packet == 0) {								# still nothing to do ? have a longer nap
 		sleep(1);
 	}
     }
 }
 
-common::debug(0, "Bye!");								# don't forget your hat
+common::debug(0, "Bye!");									# don't forget your hat
 
 exit;
 

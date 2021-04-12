@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# yak-client : simple websocket client for Yak
+# yak-cli : Yak command line client
 #
 # MIT License (ChileBob)
 #
@@ -15,6 +15,8 @@ use Protocol::WebSocket::Client;			# websocket client
 use Convert::Base64;					# transport encoding for perl clients
 use String::HexConvert ':all';				# convert hex-encoded strings to ascii
 
+use LWP::UserAgent;					# used to POST transaction alerts to URI
+
 							# ChileBob Packages
 							#
 require './common.pm';					# common yak subs
@@ -23,15 +25,14 @@ require './aes256.pm';					# AES256 encrypt/decrypt
 require './packet.pm';					# yak packet encode/decode
 
 my $config = { 						# DEFAULT CONFIGURATION
-	ident    => aes256::keyRandom(32, 'A'),		# create a new random client ident
-	auth     => 'changethispassword',		# password to bypass yak-yak rate limit
-	web_type => 'ws',				# websocket server
-	web_addr => '127.0.0.1',			#
-	web_port => 8834,				#
+	ident   => aes256::keyRandom(32, 'A'),		# create a new random client ident
+	auth    => 'changethispassword',		# password to bypass yak-yak rate limit
+	web 	=> 'ws://127.0.0.1:8834',		# websocket server 
 	debug => 5					# debug verbosity
 };
 
-# TODO: process command line to over-ride default config
+$config = common::parse_argv($config, \@ARGV); 		# process command line to over-ride default config
+
 # TODO: show help, command line args & exit
 
 my $testxfvk = 'zxviews1qwmpy5zhqsqqpqyv8h7n8jjumltlmjwl2hyc8nlk0k2nn4wn2926vj8rhum0d47kq354392kfg4vl4rdcsnnywsxr7j75uqcg8zyaa0v3xx9tgzz4whtfwspw0hnga6mcuslwhwzdz697259z4lqepu7z06wm5szkghuxtsscepks0ya9gs0yur3lsuxs26j5dej2rxqz9qjgk2ds0j45mt6zwx0pzd46ptn3yy5dstz8nv24wql8lwxl5w277nu66vumxutzpa98lq80xkcw';
@@ -45,18 +46,20 @@ my $testxfvk = 'zxviews1qwmpy5zhqsqqpqyv8h7n8jjumltlmjwl2hyc8nlk0k2nn4wn2926vj8r
 
 my $running = 1;						# running flag
 
+my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});
+
 my $tcp_socket = IO::Socket::INET->new(				# connect to websocket server (blocking)
-	PeerAddr => $config->{'web_addr'},			#
-	PeerPort => $config->{'web_port'},			#
+	PeerAddr => $web_ip,					#
+	PeerPort => $web_port,					#
 	Proto => 'tcp',						#
 	Blocking => 1						# can be blocking, all we do is send
 );
 
 if (!$tcp_socket) {						# confirm connection
-	common::debug (0, "WEB: $config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'} : WARNING!!! NOT CONNECTED!!!");
+	common::debug (0, "WEB: $config->{'web'} : WARNING!!! NOT CONNECTED!!!");
 }
 								# start websocket client
-my $client = Protocol::WebSocket::Client->new(url => "$config->{'web_type'}://$config->{'web_addr'}:$config->{'web_port'}");
+my $client = Protocol::WebSocket::Client->new(url => "$config->{'web'}");
 
 $client->on(							# websocket connect 
 	connect => sub {
@@ -86,28 +89,24 @@ $client->on(							# websocket read
 			my $packet = packet::parse(decode_base64($buf), $testxfvk);	
 
 			if ($packet->{'type'} == $packet::PKT_TRANSPARENT) {
-				common::debug(0, 'TRANSPARENT NOTIFICATION');
-				print Dumper $packet;
+#				common::debug(0, 'TRANSPARENT NOTIFICATION');
+#				print Dumper $packet;
 			}
 			elsif ($packet->{'type'} == $packet::PKT_SHIELDED) {
 				common::debug(0, 'SHIELDED NOTIFICATION');
 				print Dumper $packet;
 			}
 			elsif ($packet->{'type'} == $packet::PKT_CONFIRMATION) {
-				common::debug(0, 'TRANSACTION CONFIRMATION');
-				print Dumper $packet;
+#				common::debug(0, 'TRANSACTION CONFIRMATION');
+#				print Dumper $packet;
 			}
 			elsif ($packet->{'type'} == $packet::PKT_ANNOUNCE) {
-				common::debug(0, 'NODE ANNOUNCEMENT');
-				print Dumper $packet;
+#				common::debug(0, 'NODE ANNOUNCEMENT');
+#				print Dumper $packet;
 			}
 			elsif ($packet->{'type'} == $packet::PKT_HEARTBEAT) {
-				common::debug(0, 'HEARTBEART');
+#				common::debug(0, 'HEARTBEART');
 			}
-			else {
-				common::debug(0, 'UNKNOWN!');
-			}
-
 		}
 	}
 );

@@ -32,10 +32,11 @@ yak-yak :-
 - Supports binary & base64 transport.
 - Simple authentication, rate limits un-authenticated clients.
 
-yak-client :-
-- Websocket client, run it from a terminal.
-- Listens to broadcasts from yak-yak.
+yak-cli :-
+- Websocket command line client, run it from a terminal.
+- Listens to broadcasts from yak-yak & displays.
 - Decrypts AES256 shielded notifications sent by yak-zec
+- Triggers website URI to enable payment processing
 
 yak-zec :-
 - Zcash fullnode (zcashd) connector/client.
