@@ -261,7 +261,7 @@ while ($running) {
                     }
     
                     common::debug(0, scalar @vout . " outputs\n");
-                    push @packet, packet::generate($packet::PKT_TRANSPARENT, \@data);		# add packet(s) to buffer
+                    push @packet, packet::generate($packet::PKT_ZEC_TRANSPARENT, \@data);		# add packet(s) to buffer
                 }
     
 												########################################
@@ -311,7 +311,7 @@ while ($running) {
                             push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	# decrypt failed, create fake shielded output so we dont leak privacy
                         }
                     }
-                    push @packet, packet::generate( $packet::PKT_SHIELDED, \@data );			# generate packets
+                    push @packet, packet::generate( $packet::PKT_ZEC_SHIELDED, \@data );			# generate packets
                 }
             }
         
@@ -330,7 +330,7 @@ while ($running) {
                     push @data, $txid;
                 }
                 common::debug(0, scalar @data . " txids confirmed\n");                            
-                push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data);		# add packets to buffer
+                push @packet, packet::generate($packet::PKT_ZEC_CONFIRMATION, \@data);		# add packets to buffer
             
 												########################################################
 												# CHECK MONITORED VIEWKEY EXPIRY

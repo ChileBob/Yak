@@ -36,7 +36,11 @@ $config = common::parse_argv($config, \@ARGV); 		# process command line to over-
 
 # TODO: show help, command line args & exit
 
-my $testxfvk = 'zxviews1qwmpy5zhqsqqpqyv8h7n8jjumltlmjwl2hyc8nlk0k2nn4wn2926vj8rhum0d47kq354392kfg4vl4rdcsnnywsxr7j75uqcg8zyaa0v3xx9tgzz4whtfwspw0hnga6mcuslwhwzdz697259z4lqepu7z06wm5szkghuxtsscepks0ya9gs0yur3lsuxs26j5dej2rxqz9qjgk2ds0j45mt6zwx0pzd46ptn3yy5dstz8nv24wql8lwxl5w277nu66vumxutzpa98lq80xkcw';
+# ZCASH
+#my $testxfvk = 'zxviews1qwmpy5zhqsqqpqyv8h7n8jjumltlmjwl2hyc8nlk0k2nn4wn2926vj8rhum0d47kq354392kfg4vl4rdcsnnywsxr7j75uqcg8zyaa0v3xx9tgzz4whtfwspw0hnga6mcuslwhwzdz697259z4lqepu7z06wm5szkghuxtsscepks0ya9gs0yur3lsuxs26j5dej2rxqz9qjgk2ds0j45mt6zwx0pzd46ptn3yy5dstz8nv24wql8lwxl5w277nu66vumxutzpa98lq80xkcw';
+
+# YCASH
+my $testxfvk = 'zxviews1qdj98nu2qyqqpqpxc430gzxevyaa3dy94hwulfy3ka6vm9e0dpwa04r2343nlvyqfrxqqenfyrr39880xpzqr9ns6tdmsxg45ezvnjau2mns6spf5rgdc8nxsg5840x0u5v3g6utrha4q4m9rnaq2wfmwfuj5mpc8l2rdmje2hyjatgztnhm8pdemctqsxn4yhknm639svfsw2lww5ufz0knd0afa5r74uhfurg0cpwfh29xunyyuk9fp7ksuq7gr4xgt92r46mlgygclqszy';
 
 
 #########################################################################################################################################################################
@@ -92,11 +96,12 @@ $client->on(											# websocket read
 
 			my $packet = packet::parse(decode_base64($buf), $testxfvk);	
 
-			if ($packet->{'type'} == $packet::PKT_TRANSPARENT) {
-#				common::debug(0, 'TRANSPARENT NOTIFICATION');
-#				print Dumper $packet;
+			if ( ($packet->{'type'} == $packet::PKT_ZEC_TRANSPARENT) || ($packet->{'type'} == $packet::PKT_YEC_TRANSPARENT) ) {
+				common::debug(0, 'TRANSPARENT NOTIFICATION');
+				print Dumper $packet;
 			}
-			elsif ($packet->{'type'} == $packet::PKT_SHIELDED) {
+
+			elsif ( ($packet->{'type'} == $packet::PKT_ZEC_SHIELDED) || ($packet->{'type'} == $packet::PKT_YEC_SHIELDED) ) {
 
 				if (!exists $txn->{$packet->{'txid'}}) {			# avoid duplicates
 
@@ -109,11 +114,12 @@ $client->on(											# websocket read
 					$txn->{$packet->{'txid'}} = {				# store txn
 						value => $note->{'value'}, 
 						memo => $note->{'memo'}, 
+						coin => $note->{'coin'}, 
 						conf => 0
 					};
 												# trigger website & send data
 												
-					common::website_post($config->{'uri'}, { txid => $packet->{'txid'}, value => $note->{'value'}, memo => $note->{'memo'}, conf => 0 } );
+					common::website_post($config->{'uri'}, { txid => $packet->{'txid'}, value => $note->{'value'}, memo => $note->{'memo'}, coin => $note->{'coin'}, conf => 0 } );
 
 					print Dumper $txn->{$packet->{'txid'}};			# display transaction
 
@@ -133,7 +139,7 @@ $client->on(											# websocket read
 						common::debug(0, "CONFIRMATION : $tx");		# report confirmation
 						print Dumper $txn->{$tx};
 
-						common::website_post($config->{'uri'}, { txid => $tx, value => $txn->{$tx}->{'value'}, memo => $txn->{$tx}->{'memo'}, conf => 1 } );
+						common::website_post($config->{'uri'}, { txid => $tx, value => $txn->{$tx}->{'value'}, memo => $txn->{$tx}->{'memo'}, coin => $txn->{$tx}->{'coin'}, conf => 1 } );
 						
 						last TXID;
 					}

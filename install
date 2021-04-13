@@ -1,0 +1,23 @@
+The following Perl modules are required, install them using CPAN :-
+
+Convert::Base64
+Convert::Binary::C
+Crypt::CBC
+Crypt::Cipher::AES
+Data::Dumper
+Devel::Size
+Digest::SHA
+FFI::Platypus
+FFI::Platypus::Buffer
+FFI::Platypus::Memory
+IO::Socket::INET
+JSON
+LWP::UserAgent
+Math::BigInt
+Net::WebSocket::Server
+Protocol::WebSocket::Client
+String::HexConvert
+Time::HiRes
+ZMQ::FFI
+
+

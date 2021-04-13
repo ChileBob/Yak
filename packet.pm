@@ -24,13 +24,16 @@ my $maxbytes = 4096;											# maximum packet size (websock server hard limit 
 our $shielded_bytes = 576;										# length of ciphertext for shielded notifications, used to generate fakes
 
 # ZCASH TRANSACTION TYPES
-#
-our $PKT_TRANSPARENT  = 0x01;										# packet types, used outside this package
-our $PKT_SHIELDED     = 0x02;
 
-our $PKT_CONFIRMATION = 0x03;
-our $PKT_ANNOUNCE     = 0x04;
-our $PKT_HEARTBEAT    = 0x05;
+our $PKT_ZEC_TRANSPARENT  = 0x01;									# packet types, used outside this package
+our $PKT_ZEC_SHIELDED     = 0x02;
+
+our $PKT_CONFIRMATION     = 0x03;
+our $PKT_ANNOUNCE         = 0x04;
+our $PKT_HEARTBEAT        = 0x05;
+
+our $PKT_YEC_TRANSPARENT  = 0x06;								
+our $PKT_YEC_SHIELDED     = 0x07;
 
 our $PKT_VERSION      = 0x01;
 
@@ -88,17 +91,23 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	if ($data->{'type'} == $PKT_TRANSPARENT) {							# TRANSPARENT TRANSACTIONS (ZCASH)
+	if ( ($data->{'type'} == $PKT_ZEC_TRANSPARENT) || ($data->{'type'} == $PKT_YEC_TRANSPARENT) ) {	# TRANSPARENT TRANSACTIONS
 	
 		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));				# txid
 
 		my $count = unpack("L", substr($packet,34,4));						# count of transparent outputs
 	
 		for ($i = 0; $i < $count; $i++) { 							# transparent outputs
+			
+			my $coin = 'ZEC';
+			if ($data->{'type'} == $PKT_YEC_TRANSPARENT) {
+				$coin = 'YEC';
+			}
+
 			push @item, { 
 				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
 				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35)),
-				coin =>  'ZEC'
+				coin =>  $coin
 			};
 		}
 		$data->{'output'} = \@item;	
@@ -106,7 +115,7 @@ sub parse {
 		return($data);		
 	}
 
-	elsif ($data->{'type'} == $PKT_SHIELDED) {							# SHIELDED TRANSACTIONS (ZCASH)
+	elsif ( ($data->{'type'} == $PKT_ZEC_SHIELDED) || ($data->{'type'} == $PKT_YEC_SHIELDED) ) {	# SHIELDED TRANSACTIONS
 
 		my @ciphertext = ();
 		my @plaintext = ();
@@ -121,10 +130,15 @@ sub parse {
 
 			if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {				# auth included in plaintext
 
+				my $coin = 'ZEC';
+				if ($data->{'type'} == $PKT_YEC_SHIELDED) {
+					$coin = 'YEC';
+				}
+
 				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),		# value
 				my $memo = unpack("A*", substr($decrypted, 40));			# memo
 				$memo =~ s/\0//g;							# strip null-padding
-				push @plaintext, { value => $value, memo => $memo, coin => 'ZEC' };	# store plaintext
+				push @plaintext, { value => $value, memo => $memo, coin => $coin };	# store plaintext
 			}
 		}
 
@@ -155,14 +169,17 @@ sub parse {
 		return($data);
 	}
 
-        elsif ($data->{'type'} = $PKT_HEARTBEAT) {							# HEARTBEAT
+        elsif ($data->{'type'} == $PKT_HEARTBEAT) {							# HEARTBEAT
 		common::debug(5, "packet::parse() : heartbeart");
 		$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
 
 		return($data);		
 	}
+
+	else {
 													# if we get this far, we failed to parse 
-	common::debug($debug, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
+		common::debug(0, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
+	}
 }
 
 
@@ -180,7 +197,7 @@ sub generate {
 
 	my $header = pack("C1", $type) . pack("C1", $PKT_VERSION);					# packet header
 
-	if ( $type == $PKT_TRANSPARENT) {								# TRANSACTION NOTIFICATIONS (TADDR)
+	if ( ($type == $PKT_ZEC_TRANSPARENT) || ($type == $PKT_YEC_TRANSPARENT) ) {			# TRANSPARENT TRANSACTION NOTIFICATIONS (TADDR/SADDR)
 
 		my $data = '';
 		my $count = 0;
@@ -205,7 +222,7 @@ sub generate {
 		push @packet, encode_base64($header . pack("L", $count) . $data);			# remaining data into new packet
 	}	
 
-	elsif ( $type == $PKT_SHIELDED ) {								# TRANSACTION NOTIFICATIONS (ZADDR)
+	elsif ( ($type == $PKT_ZEC_SHIELDED ) || ($type == $PKT_YEC_SHIELDED) ) {			# SHIELDED TRANSACTION NOTIFICATIONS (ZADDR/YADDR)
 
 		my $data = '';
 		my $count = 0;
@@ -225,6 +242,7 @@ sub generate {
 				$count = 1;
 			}
 		}
+
 		push @packet, encode_base64($header . pack("L", $count) . $data)			# remaining data into new packet
 	}	
 
