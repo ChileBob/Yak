@@ -29,6 +29,8 @@ our $PKT_CONFIRMATION     = 0x03;
 our $PKT_YEC_TRANSPARENT  = 0x04;								
 our $PKT_YEC_SHIELDED     = 0x05;
 
+our $PKT_ENCRYPTED        = 0x0f;
+
 our $PKT_VERSION          = 0x01;									# packet version number
 
 our $PKT_BROADCAST        = 0xf0;									# broadcast packets, not rate limited
@@ -142,10 +144,13 @@ sub parse {
 				}
 			}
 		
-			if (scalar @plaintext > 0) {								# only return data if decryption worked
+			if (scalar @plaintext > 0) {								# decryption worked, return plaintext
 				$data->{'plaintext'}  = \@plaintext;			
-				return($data);				
 			}
+			else {											# decryption failed
+				$data->{'type'} = $PKT_ENCRYPTED;
+			}
+			return($data);				
 		}
 	}
 

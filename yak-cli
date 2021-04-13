@@ -166,6 +166,10 @@ $client->on(											# websocket read
 				common::debug(0, 'HEARTBEART');
 			}
 
+			elsif ($packet->{'type'} == $packet::PKT_ENCRYPTED) {
+				common::debug(0, 'ENCRYPTED');
+			}
+
 			else {
 				print "Unknown : " . unpack("H*", decode_base64($buf)) . "\n";
 			}
