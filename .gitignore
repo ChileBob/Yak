@@ -1,2 +1,4 @@
 libs/*
 archive
+rust/zcash/target
+rust/ycash/target

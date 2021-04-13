@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# yak-zec : node client for zcash
+# yak-yec : node client for ycash
 #
 # MIT License (ChileBob)
 #
@@ -44,19 +44,20 @@ require './packet.pm';								# yak packet generation/parsing
 
 my $config = {									# DEFAULT CONFIGURATION
 
-    nodename => 'ChileBobs Yak Node',						# name/message for announcements
+    nodename => 'ChileBobs Yak Node (YCASH)',					# name/message for announcements
     fee => 10,									# viewkey monitoring fee (zats per block)
     timer_reset => 6000,							# interval timer reset value (60 seconds)
     timer_count => 0,								# interval timer count
     client_ident => aes256::keyRandom(32,'A'),					# client ident, randomised on startup
     client_auth => 'changethispassword',					# client password, bypasses yak-yak rate limit
     debug => 5,									# debugging output level
-    node_client => 'zcash-cli',							# fullnode client binary
-    zmq => 'tcp://127.0.0.1:28232',						# fullnode zmq
+    node_client => 'ycash-cli',							# fullnode client binary
+    zmq => 'tcp://127.0.0.1:28832',						# fullnode zmq
     web => 'ws://127.0.0.1:8834',						# websocket server
-    librust => './rust/zcash/target/debug/librustzcash.so',			# path to librustzcash.so (dynamic library built from librustzcash)
-    xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn'
+    librust => './rust/ycash/target/debug/librustycash.so',			# path to librustzcash.so (dynamic library built from librustzcash)
+    xfvk => 'zxviews1qdj98nu2qqqqpqxq8g9kn7z45jx3r5ejshvdffw2h2upu7054vhdjg8sjxg6r36mdaa22savtkrtq6nnrd2u3py4q4hns3cpfz0lwuafetv03gxlm0l6cutchpmzgn92zss0wy9g8kr2zrtyeyrtsqwqrf26j58dn9wj7teyad92mk5ymajjzhdhzw2qft8zwyqs7u78wa7zkewl885l8z5rvcvrt4n6w0j06zrpt5tc8zaeusrqdrh8hqvlfpa759yslhy8jsvwf2qmvfv0j'
 };
+
 
 $config = common::parse_argv($config, \@ARGV);					# modify config from command line args
 
@@ -85,17 +86,22 @@ $ffi->attach( 'librustzcash_crh_ivk'            => [ 'string', 'string', 'opaque
 my @viewkey;									# array of xfvks to monitor
 my %viewkey_expiry;								# hash of xfvks expiry block number
 
-$config->{'xfvk'} = xfvk_check($config->{'xfvk'});				# check registration viewkey is valid
+$config->{'ivk'} = bech32::encode_bech32('zivks', xfvk_to_ivk($config->{'xfvk'}));
+common::debug(0, "IVK: $config->{'ivk'}");
+
 if ($config->{'xfvk'}) {    
     push(@viewkey, $config->{'xfvk'});
     $config->{'addr'} = xfvk_to_addr($config->{'xfvk'});			# derive address from xfvk
-    common::debug($config->{'debug'}, "REG: $config->{'addr'}");
+    common::debug(0, "REG: $config->{'addr'}");
 }
 else {										# MUST have a valid registration viewkey
     print("Registration viewkey is NOT VALID ! Aborting\n");
     exit(1);
 }
+
+
 										########################################################
+										#
 										# ZMQ CLIENT
 my $ctx = ZMQ::FFI->new();							# 
 my $zmq_socket = $ctx->socket(ZMQ_SUB);						# 
@@ -445,7 +451,7 @@ sub xfvk_to_addr {
 
         librustzcash_zip32_xfvk_address( $xfvk, $j, $j_ptr, $addr_ptr);	# more magic
 
-        return(bech32::encode_bech32('zs', $addr_ret));					# return as bech32 encoded string
+        return(bech32::encode_bech32('ys', $addr_ret));					# return as bech32 encoded string
     }
 }
 
@@ -505,6 +511,7 @@ sub xfvk_check {
     }
 
     $xfvk_str = substr($xfvk_str,0,285);						# chop key to correct length
+
     return($xfvk_str);									# viewing key is valid, return cleaned value just in case it was grubby
 }
 
