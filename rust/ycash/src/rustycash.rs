@@ -1299,8 +1299,6 @@ pub extern "C" fn librustzcash_xfvk_decrypt_note (
 
     let ivk = fvk.fvk.vk.ivk();                                 // extract ivk (incoming viewkey)
 
-//    println!("TEST IVK : {:?}", ivk.to_repr());
-
     let output = CompactOutput {                                // this class decodes cmu & epk
         cmu,                                                    //
         epk,                                                    //
@@ -1342,7 +1340,7 @@ pub extern "C" fn librustzcash_xfvk_decrypt_note (
 #[no_mangle]
 pub extern "C" fn librustzcash_xfvk_to_ivk ( 
         raw_fvk: *const [u8; 285],             // full viewing key (string, 285 chars, starts with zxviews)
-        _ret_ivk: *mut [c_uchar; 32],          // incoming viewkey (64-chars bech32 encoded, (32-bytes raw?) )
+        _ret_ivk: *mut [c_uchar; 32],          // incoming viewkey (NOTE: 32-byte repr, NOT bech32 encoded)
     ) -> u32 {         
 
     let fvk = decode_extended_full_viewing_key(                 // decode the viewing key from beck32
@@ -1352,12 +1350,12 @@ pub extern "C" fn librustzcash_xfvk_to_ivk (
         .unwrap()
         .unwrap();
 
-    let ivk = fvk.fvk.vk.ivk();                       // extract ivk (incoming viewkey)
+    let ivk = fvk.fvk.vk.ivk();                                 // extract ivk
 
-    let ptr_ivk = unsafe { &mut *_ret_ivk };                    // return ivk as array of bytes
+    let ptr_ivk = unsafe { &mut *_ret_ivk };                    // get return pointer
 
-    *ptr_ivk = ivk.to_repr();                                   // update pointer
+    *ptr_ivk = ivk.to_repr();                                   // update pointer with IVK representation
 
-    1                                                           // return something
+    1                                                           // return success flag
 }
 
