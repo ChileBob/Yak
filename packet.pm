@@ -21,21 +21,19 @@ require './aes256.pm';											# AES encrypt/decrypt
 
 my $maxbytes = 4096;											# maximum packet size (websock server hard limit is 16384)
 
-our $shielded_bytes = 576;										# length of ciphertext for shielded notifications, used to generate fakes
-
-# ZCASH TRANSACTION TYPES
+our $shielded_bytes = 576;										# ciphertext length for shielded notifications, used to generate fakes
 
 our $PKT_ZEC_TRANSPARENT  = 0x01;									# packet types, used outside this package
 our $PKT_ZEC_SHIELDED     = 0x02;
-
 our $PKT_CONFIRMATION     = 0x03;
-our $PKT_ANNOUNCE         = 0x04;
-our $PKT_HEARTBEAT        = 0x05;
+our $PKT_YEC_TRANSPARENT  = 0x04;								
+our $PKT_YEC_SHIELDED     = 0x05;
 
-our $PKT_YEC_TRANSPARENT  = 0x06;								
-our $PKT_YEC_SHIELDED     = 0x07;
+our $PKT_VERSION          = 0x01;									# packet version number
 
-our $PKT_VERSION      = 0x01;
+our $PKT_BROADCAST        = 0xf0;									# broadcast packets, not rate limited
+our $PKT_ANNOUNCE         = 0xf0;
+our $PKT_HEARTBEAT        = 0xf1;
 
 # TRANSPARENT TRANSCTION NOTIFICATION
 #
@@ -79,6 +77,7 @@ sub parse {
 	my ($packet, $xfvk) = @_;									# binary packet data, bech32 encoded xfvk
 
 	my $data;											# hash of update
+	my @viewkeys = @{$xfvk};									# viewkeys to use
 	my @item;											# array of objects
 
 	use bytes;
@@ -95,19 +94,18 @@ sub parse {
 	
 		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));				# txid
 
+		$data->{'coin'} = 'ZEC';								# coin type
+		if ($data->{'type'} == $PKT_YEC_SHIELDED) {
+			$data->{'coin'} = 'YEC';
+		}
+
 		my $count = unpack("L", substr($packet,34,4));						# count of transparent outputs
 	
 		for ($i = 0; $i < $count; $i++) { 							# transparent outputs
 			
-			my $coin = 'ZEC';
-			if ($data->{'type'} == $PKT_YEC_TRANSPARENT) {
-				$coin = 'YEC';
-			}
-
 			push @item, { 
 				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
-				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35)),
-				coin =>  $coin
+				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35))
 			};
 		}
 		$data->{'output'} = \@item;	
@@ -117,34 +115,37 @@ sub parse {
 
 	elsif ( ($data->{'type'} == $PKT_ZEC_SHIELDED) || ($data->{'type'} == $PKT_YEC_SHIELDED) ) {	# SHIELDED TRANSACTIONS
 
-		my @ciphertext = ();
-		my @plaintext = ();
+		foreach my $xfvk (@viewkeys) {									# try all our viewkeys
 
-		my $auth = unpack("H*", sha256(aes256::keyGen($xfvk)));					# plaintext auth : sha256(sha256(xfvk))
-
-		$data->{'txid'} = unpack("H64", substr($packet,2,32));  				# get txid
-
-		for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 				# loop through ciphertexts
-
-			my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
-
-			if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {				# auth included in plaintext
-
-				my $coin = 'ZEC';
-				if ($data->{'type'} == $PKT_YEC_SHIELDED) {
-					$coin = 'YEC';
-				}
-
-				my $value = hex(unpack("H*", substr($decrypted, 32, 8))),		# value
-				my $memo = unpack("A*", substr($decrypted, 40));			# memo
-				$memo =~ s/\0//g;							# strip null-padding
-				push @plaintext, { value => $value, memo => $memo, coin => $coin };	# store plaintext
+			my @ciphertext = ();
+			my @plaintext = ();
+	
+			my $auth = unpack("H*", sha256(aes256::keyGen($xfvk)));					# plaintext auth : sha256(sha256(xfvk))
+	
+			$data->{'txid'} = unpack("H64", substr($packet,2,32));  				# get txid
+	
+			$data->{'coin'} = 'ZEC';								# coin type
+			if ($data->{'type'} == $PKT_YEC_SHIELDED) {
+				$data->{'coin'} = 'YEC';
 			}
-		}
 
-		if (scalar @plaintext > 0) {								# only return data if decryption worked
-			$data->{'plaintext'}  = \@plaintext;			
-			return($data);				
+			for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 				# loop through ciphertexts
+	
+				my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
+	
+				if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {				# auth included in plaintext
+	
+					my $value = hex(unpack("H*", substr($decrypted, 32, 8))),		# value
+					my $memo = unpack("A*", substr($decrypted, 40));			# memo
+					$memo =~ s/\0//g;							# strip null-padding
+					push @plaintext, { value => $value, memo => $memo };			# store plaintext
+				}
+			}
+		
+			if (scalar @plaintext > 0) {								# only return data if decryption worked
+				$data->{'plaintext'}  = \@plaintext;			
+				return($data);				
+			}
 		}
 	}
 
@@ -160,11 +161,12 @@ sub parse {
 
 	elsif ($data->{'type'} == $PKT_ANNOUNCE) {							# NODE ANNOUNCEMENT
 	
-		$data->{'fee'}     = unpack("L", substr($packet,2,4));					# monitoring fee (per block)
-		$data->{'address'} = unpack("A78", substr($packet,6,78));				# registration address
-		$data->{'status'}  = unpack("C", substr($packet,84,1));					# node status
-		$data->{'message'} = unpack("A512", substr($packet,85,512));				# text from node
-		$data->{'message'} =~ s/\0//g;								# remove null padding
+		$data->{'nodename'} = unpack("A512", substr($packet, 2, 512));				# text from node
+		$data->{'nodename'} =~ s/\0//g;								# remove null padding
+
+		$data->{'fee'}     = unpack("L", substr($packet, 514, 4));				# monitoring fee (per block)
+		$data->{'address'} = unpack("A78", substr($packet,518, 78));				# registration address
+		$data->{'status'}  = unpack("C", substr($packet,596, 1));				# node status
 
 		return($data);
 	}
@@ -272,7 +274,7 @@ sub generate {
 
 	elsif ($type == $PKT_ANNOUNCE) {								# NODE ANNOUNCEMENT 
 
-       		$data = pack("C512", $data_raw[0]);							# 512-bytes, message
+       		$data = pack("A512", $data_raw[0]);							# 512-bytes, message
 		$data .= pack("L", $data_raw[1]);							# 4-bytes, zats per block
 		$data .= pack("A78", $data_raw[2]);							# registration address
 		$data .= pack("C1", $data_raw[3]);							# 1-byte, status

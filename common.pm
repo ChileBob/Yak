@@ -53,6 +53,8 @@ sub parse_argv {
 
 	my @argv = @{$argv};				# dereference array of args
 
+	my @viewkeys;
+
 	while (my $arg = shift @argv) {			# loop through args
 
 							# key from by pattern matching value
@@ -65,12 +67,18 @@ sub parse_argv {
 		elsif ($arg =~ m/^uri/) {		# URI to post events
 			$config->{'uri'} = $arg;
 		}
+		elsif ($arg =~ m/^zxview/) {		# viewkey
+			push @viewkeys, $arg;
+		}
 							# key followed by value
 		for my $keyword ('ident', 'auth', 'xfvk', 'ivk') {
 			if ($arg eq $keyword) {	
 				$config->{$keyword} = shift @argv;
 			}
 		}
+
+		$config->{'newkeys'} = \@viewkeys;	# arrayref of viewkeys to add
+
 	}
 	return($config);				# return config hash
 };
@@ -93,6 +101,30 @@ sub website_post {
 	}
 }
 
+
+#######################################################################################################################################
+#
+# Check Extended Full Viewing Key
+#
+sub xfvk_check {
+
+    my ($xfvk_str) = @_;								# bech32 encoded extended full viewkey
+
+    $xfvk_str =~ s/\0//g;								# strip null padding
+    $xfvk_str =~ s/\s//g;								# strip whitespace
+
+    if (index($xfvk_str, 'zxviews1') != 0) {
+        common::debug(5, "xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\', received \'$xfvk_str\'");
+        return(0);
+    }
+    elsif (length($xfvk_str) < 285) {            
+        common::debug(5, "xfvk_to_addr() : full viewkey too short, expected 285 chars, received " . length($xfvk_str) . " bytes" . "\n");
+        return(0);
+    }
+
+    $xfvk_str = substr($xfvk_str,0,285);						# chop key to correct length
+    return($xfvk_str);									# viewing key is valid
+}
 
 1;							# all packages are true, especially the ones that are not
 

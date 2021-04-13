@@ -6,7 +6,8 @@ my $config = {						# default configuration
 	auth =>  'changethispassword',			# password to avoid rate limiter
 	limit => 20,					# max number of posts per tick interval 
 	port =>  8834,					# listening port number
-	tick =>  10					# tick interval (seconds)
+	tick =>  10,					# tick interval (seconds)
+	tracker => 100					# packet buffer (checks hash for duplicates)
 };
 
 use utf8;
@@ -134,16 +135,22 @@ sub pkt_buffer {
 		$conn->send_binary(pack("A*", "OK"));		# ack
 	}
 
-	my $hash = sha256($binary);				# hash the packet
+	if (unpack("C", substr($binary,0,1)) < $packet::PKT_BROADCAST) {	# rate limit non-priviledged packets
 
-	if (!grep $_ eq $hash, @pkt_hash) {			# check for duplicates
-		push @pkt_hash, $hash;
+		my $hash = sha256($binary);				# hash the packet
 
-		if (scalar @pkt_hash > 100) {			# control tracker size
-			shift @pkt_hash;
+		if (!grep $_ eq $hash, @pkt_hash) {			# check for duplicates
+			push @pkt_hash, $hash;
+	
+			if (scalar @pkt_hash > $config->{'tracker'}) {	# control tracker size
+				shift @pkt_hash;
+			}
+	
+			broadcast ($conn, $binary, $base64, $hash);	# broadcast
 		}
-
-		broadcast ($conn, $binary, $base64, $hash);	# broadcast
+	}
+	else {								# always broadcast priviledged packets
+		broadcast ($conn, $binary, $base64, $hash);
 	}
 }
 

@@ -141,7 +141,7 @@ sub decode_base32
 #
 # encode data as bech32
 #
-sub encode_bech32
+sub encode
 {
 	my ($hrp, $bytes) = @_;
 	#verify_bytestring($bytes);
@@ -180,7 +180,7 @@ sub split_bech32
 #
 # decode bech32 string
 #
-sub decode_bech32
+sub decode
 {
 	my ($bech32enc) = @_;
 

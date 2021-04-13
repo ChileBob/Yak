@@ -45,8 +45,8 @@ require './packet.pm';								# yak packet generation/parsing
 my $config = {									# DEFAULT CONFIGURATION
 
     nodename => 'ChileBobs Yak Node (YCASH)',					# name/message for announcements
-    fee => 0.001,								# viewkey monitoring fee (YEC per block)
-    timer_reset => 6000,							# interval timer reset value (60 seconds)
+    fee => 100,									# viewkey monitoring fee (Yatoshis per block)
+    timer_reset => 60,								# interval timer reset value (60 seconds)
     timer_count => 0,								# interval timer count
     client_ident => aes256::keyRandom(32,'A'),					# client ident, randomised on startup
     client_auth => 'changethispassword',					# client password, bypasses yak-yak rate limit
@@ -57,8 +57,6 @@ my $config = {									# DEFAULT CONFIGURATION
     librust => './rust/ycash/target/debug/librustycash.so',			# path to librustzcash.so (dynamic library built from librustzcash)
     xfvk => 'zxviews1qdj98nu2qqqqpqxq8g9kn7z45jx3r5ejshvdffw2h2upu7054vhdjg8sjxg6r36mdaa22savtkrtq6nnrd2u3py4q4hns3cpfz0lwuafetv03gxlm0l6cutchpmzgn92zss0wy9g8kr2zrtyeyrtsqwqrf26j58dn9wj7teyad92mk5ymajjzhdhzw2qft8zwyqs7u78wa7zkewl885l8z5rvcvrt4n6w0j06zrpt5tc8zaeusrqdrh8hqvlfpa759yslhy8jsvwf2qmvfv0j'
 };
-
-my $testdata = pack("H*", '0400008085202f89000000000000393e0e0010270000000000000193d574db5c7c6d19f9e7f07d479b206a9e678f2abfa09b7ce4dc156f5861880c37fc6a1deeb87948f1d036102925eafb5108035bb57d125f161645743ce5065d8ff6de1b260b92fe740faf10cd761e2c64073f7e7595644af9c752efc68df958f90a3c044b03297bdf168765f9d9a859dd4cb6073e26e7cd947a024353f17cd0a978af8a248bb50f40063938e6b9d682efcdebb6c296c664282768e40c92b9f745431db4375c2ecddfa2d2948059dbdd8d1ee780fe93f9552a16ee9d203a8426d06a12d42be99b102969518b3c68e88e575bca32b70392411e8a3e8a57406a2f11f3dece3813b3b662f5e8ed8fa25cc662d3d513d0ba4f32c01b7636e16d1aeeaa7482c93a3a370e3a570a9afafd49c2a5ce60a40216b54049bac7670325ef1c6aa0d3f40c60ee15e6ca9b49fbd29d65529c48e1c3034be4070ac86d3546d96979470d7d771c55f6327252f27769625b83a02cc65a8e32113f15046d086295caa79c61a97b12d87b3c658434d374a2d9a1fe0fbc989777e7a1895c68062113000290fcd237fb91326056f780036ec7b1e964c33df27da21c3379593d56c90a2a46067f72c647e4fae1263d9caec0d78c26598770d9d6e1efdad6443b2fe5a00b3627b3c911e91c134f5c2c5939bffbc5c5f66c5c434ec26018ce2a2057896f311797227544dbb1b8141c8854c027a02720a3a844de5dd5272df23a7d81568dd870f9e372c465cb6796704d6319185b04eacbb08fe234ea73c15e7114d0ac61e452e229904b6693773db32ef4bc4bf6ee8af7e578163f5df0d7ead26f036f5e6e59f90a4eaadf337f8f69d6eb05a40a4b159137825441b090ee0200b9fbc9f627aff3f6f17c0a3f6f8b47b8075caade512c3ce6cf4856ee57a2015564af9db2ea6593465c8e85e2bff71e8860843f24196a25fe0a0ec456297ea71b9268ef483f66aea65992a054f30eacb9d37a44c6cccd0863b2fb73d3182f2a95a19c980aa18c7078d9a5337adbbce06fe6c46972b1e21a1d25fb168aa50446a34d78f81ebc76f801598783d6a37c384da8a923eba8c0b5c7349e28b0dcedc307a3e6b0ff35693b984f4e8b3b0244460138096877b55b09d69de15fec00b3d3f848b138830246aada9e92e1d600a54e0e55ccf6952efef2c3c6a9929b5b0714c8e32b89d6089df8467f62f1f0acef6fbe109fc7030c158061bc5ed96f5d716891bff262024ede8ee32bce328542af8f0559241cd1eb7728e8ce3b4730234b294a7fbe19db090f8d0ccb2a241dad57f83fd13315f20b635a1a36c701fb7f96da196b0a9ce226f53e93b1ed3bee5b34eb51fbaead142e46ebd4b11087b8bb8622960cb6dfd1e00fb5518582dca5f2fb0a0fbc2c73c6a522083cca9d7bee56798d89998fd39b125ab5c27ea507b5a6f4975f5e2316ba98777f297104fa9de4ed06b439408a67f40815425fde14c816b2f720d591c5b84d24751260116fe6e1306e6142cc3b4652b0a44e786bb654009dfebb730ea062dec72e46b2df79d2be548db0a1d2883a72f7730336b7bd01d57e0eb0d5f493142498f73626c12599ecd75721278b9f7d5ed66d03aafa0361abd03edf3b0b1f4d41bc5012f400a2abb1114b1ddb23c33e8662a5efbf064df3ae29074160822cbd14559d5a8934bda39bd2eb3dad452f7f437bb87f287a87286dd361b7d0e4fe5e1935e1b3117b25b4d5bb68325489fa5bd1d24f930e57f8cf9208398a1c7b75086c631887356b1613826a9eed7a39eb20ddf7567730f832bc596b9a18c646e745f9de1e483ef45316597ac1ad6bbc7e671c346ef19acaa4beff1068ededa753e2bf7b52a3e328c23fae02adf0bbaf605918b37754f759e14c6cf593152d98ac2be7d2e0bd69fc09ff57464c0ba6b2ecdd1401fdc74d2392d61542bf5cbe36e46d63bb90d360f0cfffaf69ca4030140537885349148b58aca8b4e44ff6e893e4203cd5e2c42209d3baa6ed4d0eecb19d878db9e57c5148a34609cf1bd2ceb6cdf9a065dcbc3d1e955628ac3925462f888cc2e4071ed68968596b064f9662fda5879040361180dc2c9b3a67579ed065e6acfe2cb40ca4c538e67f4ae454fbaa184115a298486f0de877300ac9d76d67859eff33c330824eb4b916e4307565198c35bff7090e8ffc72e94dc459c9d354ee7d1e7b8e72b4f6a1fa09c1c51b50a371c53f50ebda2b781f3e0e4f7d56ebed45c2cfb1630c099eeeedde122ec99e7a7bf49700173b118eae58cac9ca8774fedcec65d32dc2f9255b84f08c0d6e93acc7c66cebace1e35919fbcd64901145b4cccbeabdfc8ece20ba113ae736b629296ca2940879e132384881c396d6210492285300562844f8b94a62db97610e8716551cbc608da6da99b0534814a711a30bb7ab5ee2c5c494241920f0be619b818728ff4b0440011618880913185572f132fde6fb66eeeb4d9dfaaf6e4688da7d13b25acd2adf26c3736c63fd71da4ad959ffeabed314c3a59cbbaac0f32824cd3f2493ff0d0a221967e27ebc904643cbac07a9eb5e70b012b5df5d46b218f30c3be7c88f6fffc98020347143833ef3a61ec7bfa3832b65777594b99d93ca449a85a9e8b051a9381401c9d044cca21df6355b7bdef697320eac0362ccdfc5b35277c816379557fa17f2737f31f7bd12cd82c6c2aa5bbca9c42f3cd3cee826e15a6698eb2a5276232e03df8e6dc77b00e13f20040106f0cf30a1877b3d30359d9e6cdbc6163268f20cc53d22590b1e9cbc71b878a54ec5ebc557ed0a5e02107bde7c544a89f042647884f25b88903ab8131db06db78860b6e921d90f6c98637b97e3aba73a1ac90abb64bc64b93fb969a8d45ee7c5457363f6d3ab47e9fd2a48ee508a9811c950e51ee94d41aca2dcc4f8e74a8dcdffe10b8eb3d51b4e927028d99de7d6cfdc6d5a91fc516bc5ffad439ac0176f4d1b5c17a463c86e78a38b9eb5e62188a58f01de21fa682a59c951eb5a469adcc47604ebb6be875e3c436d6867967c71f26242e236fd2f342121b4b8319fbed8e6f637e0d84d20d27c5ca7fcb20320214f094e3990e5343a18cea6ba9c0379f0ccfdeb89bb0f30d8e16d034b6d3aa824c637292392e1c6530695094f9ed4cde6030ff42e75c54b7aa606830dcf4b1d6e5fa6133a029152c4873fb3e856c0c50ce3de20a409a391c95aecbe3733ab9db67fdc4dc722255e66af7a52c9c1ebbccb9564254725d3e1f60074002b39348938e3122b4d890ee28e668b7f8f23b1f99184b4b164b76f64fd69a0b1926b187ac7f33b1b513fecb8ab465e48e62b39fcfb79b9b1727b74340d54dd00');
 
 
 $config = common::parse_argv($config, \@ARGV);					# modify config from command line args
@@ -183,10 +181,10 @@ foreach my $txn ( @{$txn_reg} ) {						# loop through transactions to registrati
     foreach $line (@line) {							# we don't control the format so check each line
         $line =~ s/\0//g;							# strip nulls
 
-        if (xfvk_check($line)) {						# check for valid extended full viewing key
+        if (common::xfvk_check($line)) {					# check for valid extended full viewing key
 
             my $status = "ACTIVE ";
-            my $endblock = int ($txn->{'amount'} / $config->{'fee'}) + $txn_block->{'height'};
+            my $endblock = int ($txn->{'amount'} / ($config->{'fee'}/100000000)) + $txn_block->{'height'};
 
             if ($endblock < $txn_block->{'height'}) {				# expired registration, don't load the viewkey
                 $status = "Expired";
@@ -308,7 +306,7 @@ while ($running) {
             
                                     MEMOLINE : foreach $line (@line) {				# loop through each line
             
-                                        $line = xfvk_check($line);				# check for a valid ExtendedFullViewingKey
+                                        $line = common::xfvk_check($line);			# check for a valid ExtendedFullViewingKey
                                         if ($line) {
                                             common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
                                             push(@viewkey, $line);				# append viewkey to monitored array
@@ -416,7 +414,7 @@ sub xfvk_to_ivk {
 
     my ($xfvk_str) = @_;
 
-    $xfvk_str = xfvk_check($xfvk_str);							# check length & prefix
+    $xfvk_str = common::xfvk_check($xfvk_str);						# check length & prefix
     if (!$xfvk_str) {
         return(0);
     }
@@ -426,7 +424,7 @@ sub xfvk_to_ivk {
 
     librustzcash_xfvk_to_ivk ($xfvk_str, $ivk_ptr);					# where the magic happens
 
-    return(bech32::encode_bech32('zivks', $ivk_ret));					# return ivk as bech32 string
+    return(bech32::encode('zivks', $ivk_ret));						# return ivk as bech32 string
 }
 
 
@@ -438,13 +436,13 @@ sub xfvk_to_addr {
 
     my ($xfvk_str) = @_;								# bech32 encoded extended full viewkey
 
-    $xfvk_str = xfvk_check($xfvk_str);							# check length & prefix
+    $xfvk_str = common::xfvk_check($xfvk_str);						# check length & prefix
     if (!$xfvk_str) {
         return(0);
     }
     else {
 
-        my $xfvk = bech32::decode_bech32($xfvk_str);					# full viewkey (285 chars)
+        my $xfvk = bech32::decode($xfvk_str);						# full viewkey (285 chars)
 
         my $j = pack("c11", 0);								# diversifier (11 bytes);
 
@@ -456,7 +454,7 @@ sub xfvk_to_addr {
 
         librustzcash_zip32_xfvk_address( $xfvk, $j, $j_ptr, $addr_ptr);	# more magic
 
-        return(bech32::encode_bech32('ys', $addr_ret));					# return as bech32 encoded string
+        return(bech32::encode('ys', $addr_ret));					# return as bech32 encoded string
     }
 }
 
@@ -469,7 +467,7 @@ sub decrypt_note {
 
     my ($height, $xfvk, $cmu, $epk, $enc_ciphertext) = @_;				# height (int), hex-encoded strings (all other vars)
 
-    $xfvk = xfvk_check($xfvk);								# check viewkey for length & prefix
+    $xfvk = common::xfvk_check($xfvk);							# check viewkey for length & prefix
     if (!$xfvk) {
         return(0);
     }
@@ -494,28 +492,3 @@ sub decrypt_note {
     return( {status => $result, addr => $addr_ret, value => $value_ret, memo => $memo_ret} );
 }
 
-
-#######################################################################################################################################
-#
-# Check Extended Full Viewing Key
-#
-sub xfvk_check {
-
-    my ($xfvk_str) = @_;								# bech32 encoded extended full viewkey
-
-    $xfvk_str =~ s/\0//g;								# strip null padding
-    $xfvk_str =~ s/\s//g;								# strip whitespace
-
-    if (index($xfvk_str, 'zxviews') != 0) {
-        common::debug($config->{'debug'}, "xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\', received \'$xfvk_str\'");
-        return(0);
-    }
-    elsif (length($xfvk_str) < 285) {            
-        common::debug($config->{'debug'}, "xfvk_to_addr() : full viewkey too short, expected 285 chars, received " . length($xfvk_str) . " bytes" . "\n");
-        return(0);
-    }
-
-    $xfvk_str = substr($xfvk_str,0,285);						# chop key to correct length
-
-    return($xfvk_str);									# viewing key is valid, return cleaned value just in case it was grubby
-}

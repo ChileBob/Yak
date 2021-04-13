@@ -44,9 +44,9 @@ require './packet.pm';								# yak packet generation/parsing
 
 my $config = {									# DEFAULT CONFIGURATION
 
-    nodename => 'ChileBobs Yak Node',						# name/message for announcements
+    nodename => 'ChileBobs Yak Node (ZCASH)',					# name/message for announcements
     fee => 10,									# viewkey monitoring fee (zats per block)
-    timer_reset => 6000,							# interval timer reset value (60 seconds)
+    timer_reset => 60,								# interval timer reset value (60 seconds)
     timer_count => 0,								# interval timer count
     client_ident => aes256::keyRandom(32,'A'),					# client ident, randomised on startup
     client_auth => 'changethispassword',					# client password, bypasses yak-yak rate limit
@@ -85,7 +85,7 @@ $ffi->attach( 'librustzcash_crh_ivk'            => [ 'string', 'string', 'opaque
 my @viewkey;									# array of xfvks to monitor
 my %viewkey_expiry;								# hash of xfvks expiry block number
 
-$config->{'xfvk'} = xfvk_check($config->{'xfvk'});				# check registration viewkey is valid
+$config->{'xfvk'} = common::xfvk_check($config->{'xfvk'});				# check registration viewkey is valid
 if ($config->{'xfvk'}) {    
     push(@viewkey, $config->{'xfvk'});
     $config->{'addr'} = xfvk_to_addr($config->{'xfvk'});			# derive address from xfvk
@@ -141,7 +141,8 @@ $client->on(									# websocket read method
         }
         else {
 		if ($buf ne 'OK') {						# ignore server acknowledgements
-			print "$buf\n";
+# TODO : Could watch for requests here
+#		print "$buf\n";
 		}
         }
     }
@@ -173,7 +174,7 @@ foreach my $txn ( @{$txn_reg} ) {						# loop through transactions to registrati
     foreach $line (@line) {							# we don't control the format so check each line
         $line =~ s/\0//g;							# strip nulls
 
-        if (xfvk_check($line)) {						# check for valid extended full viewing key
+        if (common::xfvk_check($line)) {					# check for valid extended full viewing key
 
             my $status = "ACTIVE ";
             my $endblock = ($txn->{'amountZat'} / $config->{'fee'}) + $txn->{'blockheight'};
@@ -290,7 +291,7 @@ while ($running) {
             
                                     MEMOLINE : foreach $line (@line) {				# loop through each line
             
-                                        $line = xfvk_check($line);				# check for a valid ExtendedFullViewingKey
+                                        $line = common::xfvk_check($line);			# check for a valid ExtendedFullViewingKey
                                         if ($line) {
                                             common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
                                             push(@viewkey, $line);				# append viewkey to monitored array
@@ -398,12 +399,12 @@ sub xfvk_to_ivk {
 
     my ($xfvk_str) = @_;
 
-    $xfvk_str = xfvk_check($xfvk_str);							# check length & prefix
+    $xfvk_str = common::xfvk_check($xfvk_str);						# check length & prefix
     if (!$xfvk_str) {
         return(0);
     }
 
-    my $xfvk = bech32::decode_bech32($xfvk_str);					# extended full viewkey (285 chars)
+    my $xfvk = bech32::decode($xfvk_str);						# extended full viewkey (285 chars)
     my $ak = substr($xfvk, 0,  32);							# ak 
     my $nk = substr($xfvk, 32, 32);							# nk 
     my $ovk = substr($xfvk, 64, 32);							# output view key
@@ -427,13 +428,13 @@ sub xfvk_to_addr {
 
     my ($xfvk_str) = @_;								# bech32 encoded extended full viewkey
 
-    $xfvk_str = xfvk_check($xfvk_str);							# check length & prefix
+    $xfvk_str = common::xfvk_check($xfvk_str);						# check length & prefix
     if (!$xfvk_str) {
         return(0);
     }
     else {
 
-        my $xfvk = bech32::decode_bech32($xfvk_str);					# full viewkey (285 chars)
+        my $xfvk = bech32::decode($xfvk_str);						# full viewkey (285 chars)
 
         my $j = pack("c11", 0);								# diversifier (11 bytes);
 
@@ -445,7 +446,7 @@ sub xfvk_to_addr {
 
         librustzcash_zip32_xfvk_address( $xfvk, $j, $j_ptr, $addr_ptr);	# more magic
 
-        return(bech32::encode_bech32('zs', $addr_ret));					# return as bech32 encoded string
+        return(bech32::encode('zs', $addr_ret));					# return as bech32 encoded string
     }
 }
 
@@ -458,7 +459,7 @@ sub decrypt_note {
 
     my ($height, $xfvk, $cmu, $epk, $enc_ciphertext) = @_;				# height (int), hex-encoded strings (all other vars)
 
-    $xfvk = xfvk_check($xfvk);								# check viewkey for length & prefix
+    $xfvk = common::xfvk_check($xfvk);							# check viewkey for length & prefix
     if (!$xfvk) {
         return(0);
     }
@@ -481,30 +482,5 @@ sub decrypt_note {
     );
 
     return( {status => $result, addr => $addr_ret, value => $value_ret, memo => $memo_ret} );
-}
-
-
-#######################################################################################################################################
-#
-# Check Extended Full Viewing Key
-#
-sub xfvk_check {
-
-    my ($xfvk_str) = @_;								# bech32 encoded extended full viewkey
-
-    $xfvk_str =~ s/\0//g;								# strip null padding
-    $xfvk_str =~ s/\s//g;								# strip whitespace
-
-    if (index($xfvk_str, 'zxviews') != 0) {
-        common::debug($config->{'debug'}, "xfvk_to_addr() : full viewkey had the wrong prefix, expected \'zxviews\', received \'$xfvk_str\'");
-        return(0);
-    }
-    elsif (length($xfvk_str) < 285) {            
-        common::debug($config->{'debug'}, "xfvk_to_addr() : full viewkey too short, expected 285 chars, received " . length($xfvk_str) . " bytes" . "\n");
-        return(0);
-    }
-
-    $xfvk_str = substr($xfvk_str,0,285);						# chop key to correct length
-    return($xfvk_str);									# viewing key is valid, return cleaned value just in case it was grubby
 }
 
