@@ -10,8 +10,8 @@
 
 package packet;
 			
-#use Devel::Size qw(total_size);										# used to determine raw data size before generating packets
 use Convert::Base64;											# used to encode packets for transport
+use Data::Dumper;											# debugging
 
 require "$main::install/modules/common.pm";								# common subs
 require "$main::install/modules/aes256.pm";								# AES encrypt/decrypt
@@ -25,15 +25,13 @@ our $PKT_ZEC_SHIELDED     = 0x02;
 our $PKT_CONFIRMATION     = 0x03;
 our $PKT_YEC_TRANSPARENT  = 0x04;								
 our $PKT_YEC_SHIELDED     = 0x05;
-
-our $PKT_ENCRYPTED        = 0x0f;									# failed to decrypt
-our $PKT_SECURE           = 0xff;									# encrypted payload
+our $PKT_ENCRYPTED        = 0x06;									# encrypted data (that we cant read)
 
 our $PKT_VERSION          = 0x01;									# packet version number
 
 our $PKT_BROADCAST        = 0xf0;									# broadcast packets, not rate limited
-our $PKT_ANNOUNCE         = 0xf0;
 our $PKT_HEARTBEAT        = 0xf1;
+our $PKT_ENCRYPTED_BCAST  = 0xff;									# encrypted data for broadcast
 
 # TRANSPARENT TRANSCTION NOTIFICATION
 #
@@ -90,7 +88,20 @@ sub parse {
 
 	$data->{'type'}    = unpack("C", substr($packet,0,1));	# packet type
 
-	if ( ($data->{'type'} == $PKT_ZEC_TRANSPARENT) || ($data->{'type'} == $PKT_YEC_TRANSPARENT) ) {	# TRANSPARENT TRANSACTIONS
+	if ( $data->{'type'} == $PKT_ENCRYPTED_BCAST ) {						# encrypted data for broadcast
+
+		$data->{'ciphertext'} = substr($packet, 2);						# strip the header
+
+		$data->{'plaintext'} = aes256::decrypt($viewkeys[0], $data->{'ciphertext'});		# try to decrypt with first key
+
+		if (!$data->{'plaintext'}) {								# change type if we fail to decrypt
+			$data->{'type'} = $PKT_ENCRYPTED;
+		}
+
+		return($data);
+	}
+
+	elsif ( ($data->{'type'} == $PKT_ZEC_TRANSPARENT) || ($data->{'type'} == $PKT_YEC_TRANSPARENT) ) {	# TRANSPARENT TRANSACTIONS
 	
 		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));				# txid
 
@@ -159,7 +170,7 @@ sub parse {
 		return($data);					
 	}
 
-	elsif ($data->{'type'} == $PKT_ANNOUNCE) {							# NODE ANNOUNCEMENT
+	elsif ($data->{'type'} == $PKT_BROADCAST) {							# BROADCAST ANNOUNCEMENT
 	
 		$data->{'nodename'} = unpack("A512", substr($packet, 2, 512));				# text from node
 		$data->{'nodename'} =~ s/\0//g;								# remove null padding
@@ -172,7 +183,7 @@ sub parse {
 	}
 
         elsif ($data->{'type'} == $PKT_HEARTBEAT) {							# HEARTBEAT
-		common::debug(5, "packet::parse() : heartbeart");
+
 		$data->{'tick'} = unpack("A4", substr($packet, 2, 4));
 
 		return($data);		
@@ -191,7 +202,7 @@ sub parse {
 #
 sub generate {
 
-	my ($type, $data) = @_;										# type, binary data
+	my ($type, $data, $key) = @_;									# type, data (hash), encryption key (string)
 
 	my @data_raw = @{$data};									# de-reference data, easier to handle
 
@@ -215,13 +226,14 @@ sub generate {
 				$data .= $raw;
 			}
 			else  {										# max size, add packet to array & start another
-				push @packet, encode_base64($header . pack("L", $count) . $data);
+				push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));
 
 				$data = $raw;								# start a new packet
 				$count = 1;
 			}
 		}
-		push @packet, encode_base64($header . pack("L", $count) . $data);			# remaining data into new packet
+
+		push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));	# remaining data into new packet
 	}	
 
 	elsif ( ($type == $PKT_ZEC_SHIELDED ) || ($type == $PKT_YEC_SHIELDED) ) {			# SHIELDED TRANSACTION NOTIFICATIONS (ZADDR/YADDR)
@@ -238,14 +250,14 @@ sub generate {
 				$data .= $txn;
 			}
 			else  {										# max size, add packet to array & start another
-				push @packet, encode_base64($header . pack("L", $count) . $data);
+				push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));
 
 				$data = $txn;								# start a new packet
 				$count = 1;
 			}
 		}
 
-		push @packet, encode_base64($header . pack("L", $count) . $data)			# remaining data into new packet
+		push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));	# remaining data into new packet
 	}	
 
 	elsif ($type == $PKT_CONFIRMATION) {								# TRANSACTION CONFIRMATIONS
@@ -262,13 +274,13 @@ sub generate {
 				$data .= $raw;
 			}
 			else  {										# packet is max size, add to array
-				push @packet, encode_base64($header . pack("L", $count) . $data);
+				push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));
 
 				$data = $raw;								# start a new packet
 				$count = 1;
 			}
 		}
-		push @packet, encode_base64($header . pack("L", $count) . $data);			# remaining data into new packet
+		push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));	# remaining data into new packet
 	}	
 
 
@@ -279,15 +291,29 @@ sub generate {
 		$data .= pack("A78", $data_raw[2]);							# registration address
 		$data .= pack("C1", $data_raw[3]);							# 1-byte, status
 
-		push @packet, encode_base64($header . $data);						# create packet
+		push @packet, encode_base64(generate_encrypted($key, $header . $data));			# create packet
 	}	
 
 	elsif ($type == $PKT_HEARTBEAT) {								# HEARTBEAT
 
-		push @packet, encode_base64($header);							# create packet
+		push @packet, encode_base64(generate_encrypted($key, $header));				# create packet
 	}
 
 	return(@packet);										# return of base64 encoded packets
+}
+
+
+#######################################################################################################################################
+#
+# encrypt (wrap) packet, yak-yak will only broadcast notifications it can decrypt
+#
+sub generate_encrypted {
+
+	my ($key, $plaintext) = @_;									# key (string), plaintext (binary)
+
+	my $header = pack("C1", $PKT_ENCRYPTED_BCAST) . pack("C1", $PKT_VERSION);			# packet header
+
+	return( $header . aes256::encrypt($key, $plaintext));						
 }
 
 

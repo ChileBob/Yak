@@ -27,8 +27,9 @@ our $install = '/home/bob/github/Yak';						# install directory
 my $config = {									# DEFAULT CONFIGURATION
 
     nodename => 'ChileBob (YCASH)',						# name/message for announcements
+    key => 'changethiskey',							# encryption key to submit broadcasts
     fee => 100,									# viewkey monitoring fee (Yatoshis per block)
-    timer_reset => 60,								# interval timer reset value (60 seconds)
+    timer_reset => 10,								# interval timer reset value (60 seconds)
     timer_count => 0,								# interval timer count
     client_auth => 'changethispassword',					# client password, bypasses yak-yak rate limit
     debug => 5,									# debugging output level
@@ -248,7 +249,7 @@ while ($running) {
             else {
                 push @announce, 0;
             }
-            push @packet, packet::generate($packet::PKT_ANNOUNCE, \@announce);			# add packet to buffer
+            push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});	# add packet to buffer
         }
 
 										########################################################
@@ -276,7 +277,7 @@ while ($running) {
                     }
     
                     common::debug(0, scalar @vout . " outputs\n");
-                    push @packet, packet::generate($packet::PKT_TRANSPARENT, \@data);		# add packet(s) to buffer
+                    push @packet, packet::generate($packet::PKT_TRANSPARENT, \@data, $config->{'key'});	# add packet(s) to buffer
                 }
     
 												########################################
@@ -325,7 +326,7 @@ while ($running) {
                             push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 		# decrypt failed, create fake shielded output so we dont leak privacy
                         }
                     }
-                    push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data );			# generate packets
+                    push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data, $config->{'key'} );	# generate packets
                 }
             }
         
@@ -344,7 +345,7 @@ while ($running) {
                     push @data, $txid;
                 }
                 common::debug(0, scalar @data . " txids confirmed\n");                            
-                push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data);		# add packets to buffer
+                push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'key'});	# add packets to buffer
             
 												########################################################
 												# CHECK MONITORED VIEWKEY EXPIRY

@@ -153,8 +153,8 @@ $client->on(											# websocket read
 				}
 			}
 
-			elsif ($packet->{'type'} == $packet::PKT_ANNOUNCE) {
-				common::debug(0, "ANNOUNCEMENT");
+			elsif ($packet->{'type'} == $packet::PKT_BROADCAST) {
+				common::debug(0, "BROADCAST");
 				print Dumper $packet;
 			}
 

@@ -12,9 +12,9 @@
 
 package aes256;
 
-use Crypt::CBC;						# encryption mode
-use Crypt::Cipher::AES;					# AES256 encryption algo
-use Digest::SHA qw(sha256);				# sha hashing strings to create keys
+use Crypt::CBC;									# encryption mode
+use Crypt::Cipher::AES;								# AES256 encryption algo
+use Digest::SHA qw(sha256);							# sha hashing strings to create keys
 
 #######################################################################################################################################
 #
@@ -22,10 +22,10 @@ use Digest::SHA qw(sha256);				# sha hashing strings to create keys
 #
 sub keyGen {
 
-	if ($_[0] =~ m/[^0-9a-fA-F]/) {					# hash char byte values
+	if ($_[0] =~ m/[^0-9a-fA-F]/) {						# hash char byte values
 		return(sha256(pack("A*", $_[0])));
 	}
-	else {								# hash byte values
+	else {									# hash byte values
 		return(sha256(pack("H*", $_[0])));
 	}
 }
@@ -37,32 +37,42 @@ sub keyGen {
 #
 sub decrypt {
 
-	# TODO: authenticate plaintext
+	my ($key, $ciphertext) = @_;						# key (string), ciphertext (binary)
+
+									       	# ciphertext may have a packet header
+	if ( (length($ciphertext) % 16 != 0) && (substr($ciphertext,0,2) == pack("H*", $packet::PKT_ENCRYPTED . $packet::PKT_VERSION)) ) {
+		print "removing two bytes...\n";
+		$ciphertext = substr($ciphertext,2);
+	}
 	
-	my ($key, $ciphertext) = @_;
+	if (length($ciphertext) % 16 == 0) {
 
-	if (length($ciphertext) >= 32) {					# make sure we have minimum data, avoids dying horribly
+		if (length($ciphertext) >= 32) {					# make sure we have minimum data, avoids dying horribly
 
-		$key = keyGen($key);						# generate key from passed string
-
-		my $auth = sha256($key);					# generate plaintext authentication from key
-
-		$iv  = substr($ciphertext, 0, 16);				# init vector, first 16 bytes
+			$key = keyGen($key);						# generate key from passed string
 	
-		my $cipher = Crypt::CBC->new({ 					# setup encyption
-		'key' => $key,
-		'cipher' => 'OpenSSL::AES',
-		'header' => 'none',
-		'iv' => $iv,
-		'literal_key' => 1,					
-		'padding' => 'standard'
-		});
-
-		my $plaintext = $cipher->decrypt(substr($ciphertext, 16));	# decrypt
-
-		if (substr($plaintext, 0, 32) eq $auth) {			# return plaintext if prefixed with valid authentication
-			return(substr($plaintext, 32))
+			my $auth = sha256($key);					# generate plaintext authentication from key
+	
+			$iv  = substr($ciphertext, 0, 16);				# init vector, first 16 bytes
+		
+			my $cipher = Crypt::CBC->new({ 					# setup encyption
+			'key' => $key,
+			'cipher' => 'OpenSSL::AES',
+			'header' => 'none',
+			'iv' => $iv,
+			'literal_key' => 1,					
+			'padding' => 'standard'
+			});
+	
+			my $plaintext = $cipher->decrypt(substr($ciphertext, 16));	# decrypt
+	
+			if (substr($plaintext, 0, 32) eq $auth) {			# return plaintext if prefixed with valid authentication
+				return(substr($plaintext, 32))
+			}
 		}
+	}
+	else {
+		print "mangled ciphertext : " . unpack("H*", $ciphertext) . "\n";
 	}
 }
 
@@ -73,13 +83,13 @@ sub decrypt {
 #
 sub encrypt {
 
-	my ($key, $plaintext) = @_;						# key is a binary scalar, plaintext is a string
+	my ($key, $plaintext) = @_;						# key (string), plaintext (binary)
 
 	$iv  = pack("H*", keyRandom(32));					# generate random init vector (16-bytes)
 
-	$key = keyGen($key);							# generate key bytes from passed string
+	$key = keyGen($key);							# generate key bytes from string
 
-	my $auth = sha256($key);						# generate authentication (32-bytes)
+	my $auth = sha256($key);						# generate authentication from key (32-bytes)
 
 	my $cipher = Crypt::CBC->new({ 						# setup encyption
 		'key' => $key,
@@ -91,7 +101,7 @@ sub encrypt {
 	});
 	my $ciphertext = $cipher->encrypt($auth . $plaintext);			# prefix auth to plaintext and encrypt
 
-	return($iv . $ciphertext);						# return binary scalar
+	return($iv . $ciphertext);						# return binary
 }
 
 
@@ -104,19 +114,19 @@ sub keyRandom {
 	my ($key_length, $key_type) = @_;
 
 	my @chars = ('a'..'z', 'A'..'Z', '0'..'9');
-	if ($key_type eq "") {						# alpha string if any key type arg is given
-		@chars = ('a'..'f', '0'..'9');				# default key type : lower case hex string
+	if ($key_type eq "") {							# alpha string if any key type arg is given
+		@chars = ('a'..'f', '0'..'9');					# default key type : lower case hex string
 	}
 
-	if ($key_length eq "") {					# default key length is 64 chars, which is 32 bytes
+	if ($key_length eq "") {						# default key length is 64 chars, which is 32 bytes
 		$key_length = 64;
 	}
 
 	my $key_random = '';					
-	$key_random .= $chars[rand @chars] for 1..$key_length;		# add random chars 
+	$key_random .= $chars[rand @chars] for 1..$key_length;			# add random chars 
 
 	return($key_random);
 }
 
-1;
+1;										# all packages are true :-)
 
