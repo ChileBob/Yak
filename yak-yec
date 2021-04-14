@@ -9,6 +9,7 @@
 
 # TODO: Add messaging to clients for when a viewkey is added/removed
 # TODO: Wait for node to fully sync, avoids flooding yaknet with old transactions
+# TODO: show help, command line args & exit
 
 # ISSUE: Would be nice to ONLY support IVKs as a payment detector does not need to know about outgoing transactions.
 # ISSUE: The payment address cannot be derived from an IVK, so maybe not.
@@ -21,7 +22,31 @@
 #
 #########################################################################################################################################################################
 
+our $install = '/home/bob/github/Yak';						# install directory
+
+my $config = {									# DEFAULT CONFIGURATION
+
+    nodename => 'ChileBob (YCASH)',						# name/message for announcements
+    fee => 100,									# viewkey monitoring fee (Yatoshis per block)
+    timer_reset => 60,								# interval timer reset value (60 seconds)
+    timer_count => 0,								# interval timer count
+    client_auth => 'changethispassword',					# client password, bypasses yak-yak rate limit
+    debug => 5,									# debugging output level
+    node_client => 'ycash-cli',							# fullnode client binary
+    zmq => 'tcp://127.0.0.1:28832',						# fullnode zmq
+    web => 'ws://127.0.0.1:8834',						# websocket server
+    librust => './rust/ycash/target/debug/librustycash.so',			# path to librustzcash.so (dynamic library built from librustzcash)
+    xfvk => 'zxviews1qdj98nu2qqqqpqxq8g9kn7z45jx3r5ejshvdffw2h2upu7054vhdjg8sjxg6r36mdaa22savtkrtq6nnrd2u3py4q4hns3cpfz0lwuafetv03gxlm0l6cutchpmzgn92zss0wy9g8kr2zrtyeyrtsqwqrf26j58dn9wj7teyad92mk5ymajjzhdhzw2qft8zwyqs7u78wa7zkewl885l8z5rvcvrt4n6w0j06zrpt5tc8zaeusrqdrh8hqvlfpa759yslhy8jsvwf2qmvfv0j'
+};
+
+#########################################################################################################################################################################
+#
+# CHANGING ANYTHING BELOW THIS LINE IS A REALLY BAD IDEA !! IF YOU BREAK IT, YOU GET TO KEEP THE PEICES
+#
+#########################################################################################################################################################################
+
 use Data::Dumper;								# debugging
+
 use ZMQ::FFI qw(ZMQ_SUB);							# ZMQ connection to fullnode
 use Time::HiRes q(usleep);							# ZMQ polling interval timer
 use Math::BigInt;								# at some point we need to handle 256-bit ints
@@ -32,43 +57,15 @@ use String::HexConvert ':all';							# convert hex-encoded strings to ascii
 use FFI::Platypus;								# FFI interface to librustzcash
 use FFI::Platypus::Buffer qw( scalar_to_buffer);				# 
 use FFI::Platypus::Memory qw( malloc memcpy free);				# 
-use Digest::SHA qw(sha256);							# generates authentication to include in ciphertext
 
-										########################################################
-										# ChileBob Packages
-										#
-require './common.pm';								# common subs
-require './bech32.pm';								# bech32 encode/decode 
-require './aes256.pm';								# AES256 encrypt/decrypt
-require './packet.pm';								# yak packet generation/parsing
+require "$install/modules/common.pm";						# common subs
+require "$install/modules/bech32.pm";						# bech32 encode/decode 
+require "$install/modules/aes256.pm";						# AES256 encrypt/decrypt
+require "$install/modules/packet.pm";						# yak packet generation/parsing
 
-my $config = {									# DEFAULT CONFIGURATION
-
-    nodename => 'ChileBob (YCASH)',						# name/message for announcements
-    fee => 100,									# viewkey monitoring fee (Yatoshis per block)
-    timer_reset => 60,								# interval timer reset value (60 seconds)
-    timer_count => 0,								# interval timer count
-    client_ident => aes256::keyRandom(32,'A'),					# client ident, randomised on startup
-    client_auth => 'changethispassword',					# client password, bypasses yak-yak rate limit
-    debug => 5,									# debugging output level
-    node_client => 'ycash-cli',							# fullnode client binary
-    zmq => 'tcp://127.0.0.1:28832',						# fullnode zmq
-    web => 'ws://127.0.0.1:8834',						# websocket server
-    librust => './rust/ycash/target/debug/librustycash.so',			# path to librustzcash.so (dynamic library built from librustzcash)
-    xfvk => 'zxviews1qdj98nu2qqqqpqxq8g9kn7z45jx3r5ejshvdffw2h2upu7054vhdjg8sjxg6r36mdaa22savtkrtq6nnrd2u3py4q4hns3cpfz0lwuafetv03gxlm0l6cutchpmzgn92zss0wy9g8kr2zrtyeyrtsqwqrf26j58dn9wj7teyad92mk5ymajjzhdhzw2qft8zwyqs7u78wa7zkewl885l8z5rvcvrt4n6w0j06zrpt5tc8zaeusrqdrh8hqvlfpa759yslhy8jsvwf2qmvfv0j'
-};
-
+$config->{'client_ident'} = aes256::keyRandom(32,'A'),				# client ident, randomised on startup
 
 $config = common::parse_argv($config, \@ARGV);					# modify config from command line args
-
-# TODO: show help, command line args & exit
-
-
-#########################################################################################################################################################################
-#
-# CHANGING ANYTHING BELOW THIS LINE IS A REALLY BAD IDEA !! IF YOU BREAK IT, YOU GET TO KEEP THE PEICES
-#
-#########################################################################################################################################################################
 
 common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");		# show connection detail
 common::debug($config->{'debug'}, "ZMQ: $config->{'zmq'}");
@@ -99,7 +96,6 @@ else {										# MUST have a valid registration viewkey
     print("Registration viewkey is NOT VALID ! Aborting\n");
     exit(1);
 }
-
 										########################################################
 										#
 										# ZMQ CLIENT

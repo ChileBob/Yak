@@ -14,26 +14,11 @@
 # TODO: Show registered viewkeys, fees paid & status
 # TODO: show help, command line args & exit
 
-
 use Data::Dumper;					# debugging output
 
-use Time::HiRes q(usleep);				# high res timer
-use IO::Socket::INET;					# general purpose networking
-use Protocol::WebSocket::Client;			# websocket client
-use Convert::Base64;					# transport encoding for perl clients
-use String::HexConvert ':all';				# convert hex-encoded strings to ascii
-
-use LWP::UserAgent;					# used to POST transaction alerts to URI
-
-							# ChileBob Packages
-							#
-require './common.pm';					# common yak subs
-require './bech32.pm';					# bech32 encode/decode 
-require './aes256.pm';					# AES256 encrypt/decrypt
-require './packet.pm';					# yak packet encode/decode
+our $install = '/home/bob/github/Yak';
 
 my $config = { 						# DEFAULT CONFIGURATION
-	ident   => aes256::keyRandom(32, 'A'),		# create a new random client ident
 	auth    => 'changethispassword',		# password to bypass yak-yak rate limit
 	web 	=> 'ws://127.0.0.1:8834',		# websocket server 
 	uri     => '',					# URL to post transaction
@@ -41,11 +26,23 @@ my $config = { 						# DEFAULT CONFIGURATION
 	debug => 5					# debug verbosity
 };
 
-$config = common::parse_argv($config, \@ARGV); 		# process command line to over-ride default config
+require "$install/modules/common.pm";			# common yak subs
+require "$install/modules/bech32.pm";			# bech32 encode/decode 
+require "$install/modules/aes256.pm";			# AES256 encrypt/decrypt
+require "$install/modules/packet.pm";			# yak packet encode/decode
+
+$config->{'ident'} = aes256::keyRandom(32, 'A'),	# create a new random client ident
+
+$config = common::parse_argv($config, \@ARGV); 		# process command line, overrides default config
+
+use Time::HiRes q(usleep);				# high res timer
+use IO::Socket::INET;					# general purpose networking
+use Protocol::WebSocket::Client;			# websocket client
+use Convert::Base64;					# transport encoding for perl clients
 
 my @viewkeys;						# monitored viewkeys
 
-open my $handle, '<', $config->{'keys'};		# load keys 
+open my $handle, '<', $config->{'keys'};		# load viewkeys
 while (my $line = <$handle>) {
 	if ($key = common::xfvk_check($line)) {
 		push @viewkeys, $key;
@@ -134,7 +131,6 @@ $client->on(											# websocket read
 					common::website_post($config->{'uri'}, { txid => $packet->{'txid'}, value => $note->{'value'}, memo => $note->{'memo'}, coin => $packet->{'coin'}, conf => 0 } );
 
 					print Dumper $txn->{$packet->{'txid'}};			# display transaction
-
 				}
 
 			}

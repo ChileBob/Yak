@@ -1,6 +1,13 @@
 #!/usr/bin/perl
 #
-# websocket server testing - lets see how fast this puppy can go!
+# yak-yak : websocket server 
+#
+# MIT License (ChileBob)
+#
+# Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
+# Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
+
+our $install = '/home/bob/github/Yak';			# installation directory
 
 my $config = {						# default configuration
 	auth  => 'changethispassword',			# password to avoid rate limiter
@@ -11,14 +18,20 @@ my $config = {						# default configuration
 	tracker => 100					# packet buffer (checks hash for duplicates)
 };
 
+# #################################################################################################################################
+#
+# CHANGING ANYTHING BELOW THIS LINE IS A BAD IDEA
+#
+# #################################################################################################################################
+
 use utf8;
 use Net::WebSocket::Server;				# websocket server
 use Convert::Base64;					# base64 encode/decode
-use Data::Dumper;
 use Digest::SHA qw(sha256);
 
-require './aes256.pm';
-require './packet.pm';
+require "$install/modules/common.pm";			# yak perl modules
+require "$install/modules/aes256.pm";		
+require "$install/modules/packet.pm";
 
 my @pkt_hash;						# sha256 hashes of packets (prevents duplicates)
 my $client;						# connected clients

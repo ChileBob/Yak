@@ -93,7 +93,7 @@ sub website_post {
 
 	my ($uri, $data) = @_;
 
-	if ($uri) {					# skip it if the URI is not set
+	if ($uri) {					# skip if URI is not set
 
 		my $browser = LWP::UserAgent->new;
 

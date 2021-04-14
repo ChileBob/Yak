@@ -10,13 +10,11 @@
 
 package packet;
 			
-use Devel::Size qw(total_size);										# used to determine raw data size before generating packets
+#use Devel::Size qw(total_size);										# used to determine raw data size before generating packets
 use Convert::Base64;											# used to encode packets for transport
 
-use Data::Dumper;											# debugging
-
-require './common.pm';											# common subs
-require './aes256.pm';											# AES encrypt/decrypt
+require "$main::install/modules/common.pm";								# common subs
+require "$main::install/modules/aes256.pm";								# AES encrypt/decrypt
 
 my $maxbytes = 4096;											# maximum packet size (websock server hard limit is 16384)
 
