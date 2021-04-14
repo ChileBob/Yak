@@ -44,7 +44,7 @@ require './packet.pm';								# yak packet generation/parsing
 
 my $config = {									# DEFAULT CONFIGURATION
 
-    nodename => 'ChileBobs Yak Node (ZCASH)',					# name/message for announcements
+    nodename => 'ChileBob (ZCASH)',						# name/message for announcements
     fee => 10,									# viewkey monitoring fee (zats per block)
     timer_reset => 60,								# interval timer reset value (60 seconds)
     timer_count => 0,								# interval timer count
@@ -304,7 +304,7 @@ while ($running) {
 
                                 else {										# woo!! we decrypted an output for a monitored viewkey
                                     common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-                                    push @data, aes256::encrypt(aes256::keyGen($xfvk), sha256(aes256::keyGen($xfvk)) . $result->{'value'} . $result->{'memo'}, $xfvk);
+                                    push @data, aes256::encrypt(aes256::keyGen($xfvk), sha256(aes256::keyGen($xfvk)) . $result->{'value'} . $result->{'memo'});
                                 }
 
                             last VIEWKEY;        

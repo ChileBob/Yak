@@ -117,13 +117,12 @@ sub parse {
 
 	elsif ( ($data->{'type'} == $PKT_ZEC_SHIELDED) || ($data->{'type'} == $PKT_YEC_SHIELDED) ) {	# SHIELDED TRANSACTIONS
 
-		foreach my $xfvk (@viewkeys) {									# try all our viewkeys
+		my @plaintext = ();
 
-			my @ciphertext = ();
-			my @plaintext = ();
-	
-			my $auth = unpack("H*", sha256(aes256::keyGen($xfvk)));					# plaintext auth : sha256(sha256(xfvk))
-	
+		foreach my $key (@viewkeys) {									# try all our viewkeys
+
+			my $auth = unpack("H*", sha256(aes256::keyGen($key)));					# plaintext auth : sha256(sha256(xfvk))
+
 			$data->{'txid'} = unpack("H64", substr($packet,2,32));  				# get txid
 	
 			$data->{'coin'} = 'ZEC';								# coin type
@@ -133,25 +132,25 @@ sub parse {
 
 			for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 				# loop through ciphertexts
 	
-				my $decrypted = aes256::decrypt(aes256::keyGen($xfvk), substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
+				my $decrypted = aes256::decrypt(aes256::keyGen($key), substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
 	
 				if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {				# auth included in plaintext
-	
+
 					my $value = hex(unpack("H*", substr($decrypted, 32, 8))),		# value
 					my $memo = unpack("A*", substr($decrypted, 40));			# memo
 					$memo =~ s/\0//g;							# strip null-padding
 					push @plaintext, { value => $value, memo => $memo };			# store plaintext
 				}
 			}
-		
-			if (scalar @plaintext > 0) {								# decryption worked, return plaintext
-				$data->{'plaintext'}  = \@plaintext;			
-			}
-			else {											# decryption failed
-				$data->{'type'} = $PKT_ENCRYPTED;
-			}
-			return($data);				
 		}
+		
+		if (scalar @plaintext > 0) {								# decryption worked, return plaintext
+			$data->{'plaintext'}  = \@plaintext;			
+		}
+		else {											# decryption failed
+			$data->{'type'} = $PKT_ENCRYPTED;
+		}
+		return($data);				
 	}
 
 	elsif ($data->{'type'} == $PKT_CONFIRMATION) {							# TRANSACTION CONFIRMATION (ZCASH)

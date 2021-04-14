@@ -44,7 +44,7 @@ require './packet.pm';								# yak packet generation/parsing
 
 my $config = {									# DEFAULT CONFIGURATION
 
-    nodename => 'ChileBobs Yak Node (YCASH)',					# name/message for announcements
+    nodename => 'ChileBob (YCASH)',						# name/message for announcements
     fee => 100,									# viewkey monitoring fee (Yatoshis per block)
     timer_reset => 60,								# interval timer reset value (60 seconds)
     timer_count => 0,								# interval timer count
@@ -147,7 +147,7 @@ $client->on(									# websocket read method
         }
         else {
 		if ($buf ne 'OK') {						# ignore server acknowledgements
-			print "$buf\n";
+#			print "$buf\n";
 		}
         }
     }
@@ -203,6 +203,8 @@ foreach my $txn ( @{$txn_reg} ) {						# loop through transactions to registrati
         }
     }
 }
+
+print "Loaded " . scalar @viewkey . " viewkeys\n";
 
 										########################################################
 										# MAIN LOOP
@@ -308,7 +310,7 @@ while ($running) {
             
                                         $line = common::xfvk_check($line);			# check for a valid ExtendedFullViewingKey
                                         if ($line) {
-                                            common::debug($config->{'debug'}, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " zats");
+                                            common::debug(0, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " yoshis");
                                             push(@viewkey, $line);				# append viewkey to monitored array
                                             $viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};		# append expiry blocknumber
                                             last MEMOLINE;                
@@ -318,13 +320,13 @@ while ($running) {
                                 }
 
                                 else {										# woo!! we decrypted an output for a monitored viewkey
-                                    common::debug($config->{'debug'}, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-                                    push @data, aes256::encrypt(aes256::keyGen($xfvk), sha256(aes256::keyGen($xfvk)) . $result->{'value'} . $result->{'memo'}, $xfvk);
+                                    common::debug(0, "******* SHIELDED TRANSACTION ****** : $value : $memo");
+                                    push @data, aes256::encrypt( aes256::keyGen($xfvk), sha256(aes256::keyGen($xfvk)) . $result->{'value'} . $result->{'memo'} );
                                 }
 
                             last VIEWKEY;        
                             }
-                            push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	# decrypt failed, create fake shielded output so we dont leak privacy
+                            push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 		# decrypt failed, create fake shielded output so we dont leak privacy
                         }
                     }
                     push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data );			# generate packets

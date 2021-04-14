@@ -158,7 +158,7 @@ $client->on(											# websocket read
 			}
 
 			elsif ($packet->{'type'} == $packet::PKT_ANNOUNCE) {
-				common::debug(0, "NODE ANNOUNCEMENT");
+				common::debug(0, "ANNOUNCEMENT");
 				print Dumper $packet;
 			}
 
