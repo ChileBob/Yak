@@ -321,7 +321,7 @@ while ($running) {
 
                                 else {										# woo!! we decrypted an output for a monitored viewkey
                                     common::debug(0, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-                                    push @data, aes256::encrypt( aes256::keyGen($xfvk), sha256(aes256::keyGen($xfvk)) . $result->{'value'} . $result->{'memo'} );
+                                    push @data, aes256::encrypt( $xfvk, $result->{'value'} . $result->{'memo'} );
                                 }
 
                             last VIEWKEY;        

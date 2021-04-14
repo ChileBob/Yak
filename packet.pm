@@ -12,7 +12,6 @@ package packet;
 			
 use Devel::Size qw(total_size);										# used to determine raw data size before generating packets
 use Convert::Base64;											# used to encode packets for transport
-use Digest::SHA qw(sha256);										# generates auth key included in shielded notification ciphertext
 
 use Data::Dumper;											# debugging
 
@@ -29,7 +28,8 @@ our $PKT_CONFIRMATION     = 0x03;
 our $PKT_YEC_TRANSPARENT  = 0x04;								
 our $PKT_YEC_SHIELDED     = 0x05;
 
-our $PKT_ENCRYPTED        = 0x0f;
+our $PKT_ENCRYPTED        = 0x0f;									# failed to decrypt
+our $PKT_SECURE           = 0xff;									# encrypted payload
 
 our $PKT_VERSION          = 0x01;									# packet version number
 
@@ -121,8 +121,6 @@ sub parse {
 
 		foreach my $key (@viewkeys) {									# try all our viewkeys
 
-			my $auth = unpack("H*", sha256(aes256::keyGen($key)));					# plaintext auth : sha256(sha256(xfvk))
-
 			$data->{'txid'} = unpack("H64", substr($packet,2,32));  				# get txid
 	
 			$data->{'coin'} = 'ZEC';								# coin type
@@ -132,12 +130,12 @@ sub parse {
 
 			for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 				# loop through ciphertexts
 	
-				my $decrypted = aes256::decrypt(aes256::keyGen($key), substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
+				my $decrypted = aes256::decrypt($key, substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
 	
-				if (unpack("H*", substr($decrypted, 0, 32)) eq $auth) {				# auth included in plaintext
+				if ($decrypted) {								# auth included in plaintext
 
-					my $value = hex(unpack("H*", substr($decrypted, 32, 8))),		# value
-					my $memo = unpack("A*", substr($decrypted, 40));			# memo
+					my $value = hex(unpack("H*", substr($decrypted, 0, 8))),		# value
+					my $memo = unpack("A*", substr($decrypted, 8, 512));			# memo
 					$memo =~ s/\0//g;							# strip null-padding
 					push @plaintext, { value => $value, memo => $memo };			# store plaintext
 				}

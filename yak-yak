@@ -3,10 +3,11 @@
 # websocket server testing - lets see how fast this puppy can go!
 
 my $config = {						# default configuration
-	auth =>  'changethispassword',			# password to avoid rate limiter
+	auth  => 'changethispassword',			# password to avoid rate limiter
+	key   => 'changethiskey',			# encryption key, nodes must encrypt with this key before sending here
 	limit => 20,					# max number of posts per tick interval 
-	port =>  8834,					# listening port number
-	tick =>  10,					# tick interval (seconds)
+	port  =>  8834,					# listening port number
+	tick  =>  10,					# tick interval (seconds)
 	tracker => 100					# packet buffer (checks hash for duplicates)
 };
 

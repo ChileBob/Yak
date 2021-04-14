@@ -37,26 +37,32 @@ sub keyGen {
 #
 sub decrypt {
 
-	my ($key, $input) = @_;
+	# TODO: authenticate plaintext
+	
+	my ($key, $ciphertext) = @_;
 
-	my $inputHEX = unpack("H*", $input);					# convert binary scalar input to hex-encoded string
+	if (length($ciphertext) >= 32) {					# make sure we have minimum data, avoids dying horribly
 
-	$ivHEX  = substr($inputHEX, 0, 32);					# init vector is first 16 bytes, 32 hex chars
+		$key = keyGen($key);						# generate key from passed string
 
-	if (length($inputHEX) >= 64) {						# make sure we have more than minimum data, avoids dying horribly
+		my $auth = sha256($key);					# generate plaintext authentication from key
 
-		$cipherHEX = substr($inputHEX, 32, (length($inputHEX) - 32));	# ciphertext, as hex string
-
+		$iv  = substr($ciphertext, 0, 16);				# init vector, first 16 bytes
+	
 		my $cipher = Crypt::CBC->new({ 					# setup encyption
-			'key' => $key,
-			'cipher' => 'OpenSSL::AES',
-			'header' => 'none',
-			'iv' => pack("H*", $ivHEX),
-			'literal_key' => 1,					
-			'padding' => 'standard'
+		'key' => $key,
+		'cipher' => 'OpenSSL::AES',
+		'header' => 'none',
+		'iv' => $iv,
+		'literal_key' => 1,					
+		'padding' => 'standard'
 		});
 
-		return($cipher->decrypt(pack("H*", $cipherHEX)));		# result is a binary scalar
+		my $plaintext = $cipher->decrypt(substr($ciphertext, 16));	# decrypt
+
+		if (substr($plaintext, 0, 32) eq $auth) {			# return plaintext if prefixed with valid authentication
+			return(substr($plaintext, 32))
+		}
 	}
 }
 
@@ -69,7 +75,11 @@ sub encrypt {
 
 	my ($key, $plaintext) = @_;						# key is a binary scalar, plaintext is a string
 
-	$iv  = pack("H*", keyRandom(32));					# generate random init vector (32 hex chars, packs to 128-bit)
+	$iv  = pack("H*", keyRandom(32));					# generate random init vector (16-bytes)
+
+	$key = keyGen($key);							# generate key bytes from passed string
+
+	my $auth = sha256($key);						# generate authentication (32-bytes)
 
 	my $cipher = Crypt::CBC->new({ 						# setup encyption
 		'key' => $key,
@@ -79,7 +89,7 @@ sub encrypt {
 		'literal_key' => 1,				
 		'padding' => 'standard'
 	});
-	my $ciphertext = $cipher->encrypt($plaintext);	
+	my $ciphertext = $cipher->encrypt($auth . $plaintext);			# prefix auth to plaintext and encrypt
 
 	return($iv . $ciphertext);						# return binary scalar
 }
