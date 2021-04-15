@@ -208,7 +208,6 @@ while ($running >= 0) {
 			usleep 100_00;										# lets not beat up the server, take a nap
 		}
 	}
-	common::debug(0, "Reconnecting...");								# reconnect to websocket server
 }
 
 exit;

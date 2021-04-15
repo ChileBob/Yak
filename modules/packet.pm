@@ -106,7 +106,7 @@ sub parse {
 		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));				# txid
 
 		$data->{'coin'} = 'ZEC';								# coin type
-		if ($data->{'type'} == $PKT_YEC_SHIELDED) {
+		if ($data->{'type'} == $PKT_YEC_TRANSPARENT) {
 			$data->{'coin'} = 'YEC';
 		}
 
