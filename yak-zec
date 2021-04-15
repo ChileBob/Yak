@@ -67,6 +67,8 @@ $config->{'client_ident'} = aes256::keyRandom(32,'A'),				# client ident, random
 
 $config = common::parse_argv($config, \@ARGV);					# modify config from command line args
 
+$SIG{INT} = \&shutdown;								# gracefull shutdown
+
 common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");		# show connection detail
 common::debug($config->{'debug'}, "ZMQ: $config->{'zmq'}");
 common::debug($config->{'debug'}, "WEB: $config->{'web'}");
@@ -198,7 +200,7 @@ while ($running) {
     
     if ($tcp_socket) {								# confirm connection is up
 
-	if (scalar @packet > 0) {						# send oldest packet
+	DELIVER: if (scalar @packet > 0) {					# send oldest packet
 		
     	    $client->write($packet[0]);
             @packet = splice(@packet, 1);
@@ -219,7 +221,13 @@ while ($running) {
             $client->read($recv_data);						# process it
         }
 
-
+	if ($running == 2) {							# shutdown gracefully
+		if (scalar @packet > 0) {
+			goto DELIVER;
+		}
+		common::debug(0, "Bye!");
+		exit(0);
+	}
 										########################################################
 										# interval timer
 										#
@@ -382,6 +390,19 @@ sub node_cli {
     }
 }
 
+
+#############################################################################################################################################################################
+#
+# Gracefull shutdown
+#
+sub shutdown {
+
+	my $announce - ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'}, 0 );	# send announcement that we're offline
+
+	push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});	# add packet to buffer
+
+	$running = 2;										# set runtime flag to exiting
+}
 
 #############################################################################################################################################################################
 #
