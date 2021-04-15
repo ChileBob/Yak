@@ -25,7 +25,6 @@ my $config = { 											# DEFAULT CONFIGURATION
 use Time::HiRes q(usleep);									# high res timer
 use IO::Socket::INET;										# general purpose networking
 use Protocol::WebSocket::Client;								# websocket client
-use Convert::Base64;										# transport encoding for perl clients
 
 use Cwd qw(abs_path);										# get install/working directory
 use File::Basename;
@@ -113,7 +112,7 @@ while ($running >= 0) {
 				}
 				else {
 		
-					my $packet = packet::parse(decode_base64($buf), \@viewkeys);	
+					my $packet = packet::parse($buf, \@viewkeys, 'BASE64');	
 		
 					if ( ($packet->{'type'} == $packet::PKT_ZEC_TRANSPARENT) || ($packet->{'type'} == $packet::PKT_YEC_TRANSPARENT) ) {
 						common::debug(0, 'TRANSPARENT NOTIFICATION');
@@ -174,10 +173,6 @@ while ($running >= 0) {
 		
 					elsif ($packet->{'type'} == $packet::PKT_ENCRYPTED) {
 						common::debug(0, 'ENCRYPTED');
-					}
-		
-					else {
-						print "Unknown : " . unpack("H*", decode_base64($buf)) . "\n";
 					}
 				}
 			}

@@ -137,23 +137,16 @@ sub pkt_buffer {
 
 	my ($conn, $raw, $transport) = @_;
 
-	# TODO : Parse raw packet, type PKT_ENCRYPTED must decrypt before broadcast
-	# TODO : Failure to decrypt PKT_ENCRYPTED means the client is misbehaving & should be ignored (or kicked?)
-	
-	my $binary;
-
 	$client->{$conn}->{'rate'}++;							# client rate limiter
 
 	if ($transport eq 'BASE64') {							# convert from BASE64 if needed
-		$binary = decode_base64($raw);
 		$conn->send_utf8('OK');							# ack
 	}
 	elsif ($transport eq 'BINARY') {						# default is BINARY
-		$binary = $raw;
 		$conn->send_binary(pack("A*", "OK"));					# ack
 	}
 
-	my $packet = packet::parse($binary, [ $config->{'key'} ] );			# parse what we received
+	my $packet = packet::parse($raw, [ $config->{'key'} ], $transport );		# parse what we received
 
 	if ($packet->{'type'} == $packet::PKT_ENCRYPTED_BCAST) {			# was a broadcast encrypted with our key
 

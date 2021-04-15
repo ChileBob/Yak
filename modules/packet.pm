@@ -72,11 +72,15 @@ my $debug   = 5;											# debug verbosity
 #
 sub parse {
 
-	my ($packet, $xfvk) = @_;									# binary packet data, bech32 encoded xfvk
+	my ($packet, $xfvk, $transport ) = @_;								# binary packet data, bech32 encoded xfvk
 
 	my $data;											# hash of update
 	my @viewkeys = @{$xfvk};									# viewkeys to use
 	my @item;											# array of objects
+
+	if ($transport eq 'BASE64') {									# convert to binary
+		$packet = decode_base64($packet);
+	}
 
 	use bytes;
 
