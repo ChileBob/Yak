@@ -42,7 +42,6 @@ use Time::HiRes q(usleep);														# ZMQ polling interval timer
 use Math::BigInt;															# at some point we need to handle 256-bit ints
 use IO::Socket::INET;															# general purpose networking
 use Protocol::WebSocket::Client;													# websocket client
-use Convert::Binary::C;															# the Rust things are designed to work with C so Perl needs this
 use String::HexConvert ':all';														# convert hex-encoded strings to ascii
 use FFI::Platypus;															# FFI interface to librustzcash
 use FFI::Platypus::Buffer qw( scalar_to_buffer);											# 
@@ -148,8 +147,6 @@ foreach my $txn ( @{$txn_reg} ) {													# VIEWKEY REGISTRATION
 	}
 }
 print "Loaded " . scalar @viewkey . " viewkeys\n";
-
-
 
 
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});								# WEBSOCKET CLIENT
@@ -372,6 +369,7 @@ while ($running >= 0) {
 	}
 }
 
+common::debug("\nBye!");														# Bye ! Don't forget to write...
 exit;
 
 
