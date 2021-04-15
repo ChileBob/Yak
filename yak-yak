@@ -7,8 +7,6 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-our $install = '/home/bob/github/Yak';								# installation directory
-
 my $config = {											# default configuration
 	auth  => 'changethispassword',								# password to avoid rate limiter
 	key   => 'changethiskey',								# encryption key, nodes must encrypt with this key before sending here
@@ -25,11 +23,15 @@ my $config = {											# default configuration
 # #################################################################################################################################
 
 use utf8;
+use Data::Dumper;										# debugging
+
 use Net::WebSocket::Server;									# websocket server
 use Convert::Base64;										# base64 encode/decode
 use Digest::SHA qw(sha256);
 
-use Data::Dumper;										# debugging
+use Cwd qw(abs_path);										# get install/working directory
+use File::Basename;
+our $install = dirname(abs_path($0));			
 
 require "$install/modules/common.pm";								# yak perl modules
 require "$install/modules/aes256.pm";		

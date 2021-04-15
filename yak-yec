@@ -22,8 +22,6 @@
 #
 #########################################################################################################################################################################
 
-our $install = '/home/bob/github/Yak';						# install directory
-
 my $config = {									# DEFAULT CONFIGURATION
 
     nodename => 'ChileBob (YCASH)',						# name/message for announcements
@@ -58,6 +56,10 @@ use String::HexConvert ':all';							# convert hex-encoded strings to ascii
 use FFI::Platypus;								# FFI interface to librustzcash
 use FFI::Platypus::Buffer qw( scalar_to_buffer);				# 
 use FFI::Platypus::Memory qw( malloc memcpy free);				# 
+
+use Cwd qw(abs_path);								# get install/working directory
+use File::Basename;
+our $install = dirname(abs_path($0));			
 
 require "$install/modules/common.pm";						# common subs
 require "$install/modules/bech32.pm";						# bech32 encode/decode 

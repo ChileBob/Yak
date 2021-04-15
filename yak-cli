@@ -7,42 +7,42 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-# TODO: Support many viewkeys
 # TODO: Status display
-# TODO: Cache viewkeys, reload on startup
 # TODO: Show remote node status
 # TODO: Show registered viewkeys, fees paid & status
 # TODO: show help, command line args & exit
 
-use Data::Dumper;					# debugging output
+use Data::Dumper;										# debugging output
 
-our $install = '/home/bob/github/Yak';
-
-my $config = { 						# DEFAULT CONFIGURATION
-	auth    => 'changethispassword',		# password to bypass yak-yak rate limit
-	web 	=> 'ws://127.0.0.1:8834',		# websocket server 
-	uri     => '',					# URL to post transaction
-	keys    => './yak-cli.keys',			# filename for viewkey storage
-	debug => 5					# debug verbosity
+my $config = { 											# DEFAULT CONFIGURATION
+	auth    => 'changethispassword',							# password to bypass yak-yak rate limit
+	web 	=> 'ws://127.0.0.1:8834',							# websocket server 
+	uri     => '',										# URL to post transaction
+	keys    => './yak-cli.keys',								# filename for viewkey storage
+	debug => 5										# debug verbosity
 };
 
-require "$install/modules/common.pm";			# common yak subs
-require "$install/modules/bech32.pm";			# bech32 encode/decode 
-require "$install/modules/aes256.pm";			# AES256 encrypt/decrypt
-require "$install/modules/packet.pm";			# yak packet encode/decode
+use Time::HiRes q(usleep);									# high res timer
+use IO::Socket::INET;										# general purpose networking
+use Protocol::WebSocket::Client;								# websocket client
+use Convert::Base64;										# transport encoding for perl clients
 
-$config->{'ident'} = aes256::keyRandom(32, 'A'),	# create a new random client ident
+use Cwd qw(abs_path);										# get install/working directory
+use File::Basename;
+our $install = dirname(abs_path($0));			
 
-$config = common::parse_argv($config, \@ARGV); 		# process command line, overrides default config
+require "$install/modules/common.pm";								# common yak subs
+require "$install/modules/bech32.pm";								# bech32 encode/decode 
+require "$install/modules/aes256.pm";								# AES256 encrypt/decrypt
+require "$install/modules/packet.pm";								# yak packet encode/decode
 
-use Time::HiRes q(usleep);				# high res timer
-use IO::Socket::INET;					# general purpose networking
-use Protocol::WebSocket::Client;			# websocket client
-use Convert::Base64;					# transport encoding for perl clients
+$config->{'ident'} = aes256::keyRandom(32, 'A'),						# create a new random client ident
 
-my @viewkeys;						# monitored viewkeys
+$config = common::parse_argv($config, \@ARGV); 							# process command line, overrides default config
 
-open my $handle, '<', $config->{'keys'};		# load viewkeys
+my @viewkeys;											# monitored viewkeys
+
+open my $handle, '<', $config->{'keys'};							# load viewkeys
 while (my $line = <$handle>) {
 	if ($key = common::xfvk_check($line)) {
 		push @viewkeys, $key;
@@ -50,7 +50,6 @@ while (my $line = <$handle>) {
 }
 close ($handle);
 common::debug (0, "KEY: Loaded " . scalar @viewkeys . " viewkeys from yak-cli.keys");
-
 
 #########################################################################################################################################################################
 #
