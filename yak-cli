@@ -62,141 +62,154 @@ my $running = 1;										# running flag
 my @txid;											# array of txids waiting for confirmation
 my $txn;											# hash of transactions
 
-my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});
 
-my $tcp_socket = IO::Socket::INET->new(								# connect to websocket server (blocking)
-	PeerAddr => $web_ip,									#
-	PeerPort => $web_port,									#
-	Proto => 'tcp',										#
-	Blocking => 1										# can be blocking, all we do is send
-);
 
-if (!$tcp_socket) {										# confirm connection
-	common::debug (0, "WEB: $config->{'web'} : WARNING!!! NOT CONNECTED!!!");
-}
-												# start websocket client
-my $client = Protocol::WebSocket::Client->new(url => "$config->{'web'}");
+my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});			# break websocket uri into components
 
-$client->on(											# websocket connect 
-	connect => sub {
-		my $client = shift;
+while ($running >= 0) {
+
+	my $tcp_socket = IO::Socket::INET->new(								# connect to websocket server (blocking)
+		PeerAddr => $web_ip,									#
+		PeerPort => $web_port,									#
+		Proto => 'tcp',										#
+		Blocking => 1										# can be blocking, all we do is send
+	);
+
+	if (!$tcp_socket) {										# confirm connection
+		my $delay = int rand(30) + 5;
+		common::debug (0, "WEB: $config->{'web'} : Failed to reconnect!!! Trying again in $delay seconds");
+		sleep($delay);
 	}
-);
-
-$client->on(
-	write => sub {										# websocket write
-		my $client = shift;
-		my ($buf) = @_;
-		syswrite $tcp_socket, $buf;
-	}
-);
-
-$client->on(											# websocket read
-	read => sub {
-
-		my $client = shift;
-		my ($buf) = @_;
-
-		if ($buf =~ m/^HELLO/) {							# server always says 'Hi'
-			common::debug(0, "Connected!");
+	else {
+		if ($running == 0) {
+			common::debug (0, "Reconnected");
+			$running = 1;									# reset runtime flag
 		}
-		else {
+							
+		my $client = Protocol::WebSocket::Client->new(url => "$config->{'web'}");		# new websocket client
 
-			my $packet = packet::parse(decode_base64($buf), \@viewkeys);	
-
-			if ( ($packet->{'type'} == $packet::PKT_ZEC_TRANSPARENT) || ($packet->{'type'} == $packet::PKT_YEC_TRANSPARENT) ) {
-				common::debug(0, 'TRANSPARENT NOTIFICATION');
-				print Dumper $packet;
+		$client->on(											# websocket connect 
+			connect => sub {
+				my $client = shift;
 			}
-
-			elsif ( ($packet->{'type'} == $packet::PKT_ZEC_SHIELDED) || ($packet->{'type'} == $packet::PKT_YEC_SHIELDED) ) {
-
-				if (!exists $txn->{$packet->{'txid'}}) {			# avoid duplicates
-
-					common::debug(0, "SHIELDED NOTIFICATION : $packet->{'txid'}");
-
-					my $note = $packet->{'plaintext'}[0];			# only ever ONE output
-
-					push @txid, $packet->{'txid'};				# store txid
-
-					$txn->{$packet->{'txid'}} = {				# store txn
-						value => $note->{'value'}, 
-						memo => $note->{'memo'}, 
-						coin => $packet->{'coin'}, 
-						conf => 0
-					};
-												# trigger website & send data
-												
-					common::website_post($config->{'uri'}, { txid => $packet->{'txid'}, value => $note->{'value'}, memo => $note->{'memo'}, coin => $packet->{'coin'}, conf => 0 } );
-
-					print Dumper $txn->{$packet->{'txid'}};			# display transaction
+		);
+	
+		$client->on(
+			write => sub {										# websocket write
+				my $client = shift;
+				my ($buf) = @_;
+				syswrite $tcp_socket, $buf;
+			}
+		);
+	
+		$client->on(											# websocket read
+			read => sub {
+		
+				my $client = shift;
+				my ($buf) = @_;
+		
+				if ($buf =~ m/^HELLO/) {							# server always says 'Hi'
+					common::debug(0, "Connected!");
 				}
-
-			}
-
-			elsif ($packet->{'type'} == $packet::PKT_CONFIRMATION) {
-
-				TXID: foreach my $tx (@{$packet->{'data'}}) {			# loop through txids in the packet
-
-					if ( grep { /$tx/ } @txid ) {				# search our txids
-
-						$txn->{$tx}->{'conf'} = 1;			# update confirmation
-
-						common::debug(0, "CONFIRMATION : $tx");		# report confirmation
-						print Dumper $txn->{$tx};
-
-						common::website_post($config->{'uri'}, { txid => $tx, value => $txn->{$tx}->{'value'}, memo => $txn->{$tx}->{'memo'}, coin => $txn->{$tx}->{'coin'}, conf => 1 } );
-						
-						last TXID;
+				else {
+		
+					my $packet = packet::parse(decode_base64($buf), \@viewkeys);	
+		
+					if ( ($packet->{'type'} == $packet::PKT_ZEC_TRANSPARENT) || ($packet->{'type'} == $packet::PKT_YEC_TRANSPARENT) ) {
+						common::debug(0, 'TRANSPARENT NOTIFICATION');
+						print Dumper $packet;
+					}
+		
+					elsif ( ($packet->{'type'} == $packet::PKT_ZEC_SHIELDED) || ($packet->{'type'} == $packet::PKT_YEC_SHIELDED) ) {
+		
+						if (!exists $txn->{$packet->{'txid'}}) {			# avoid duplicates
+		
+							common::debug(0, "SHIELDED NOTIFICATION : $packet->{'txid'}");
+		
+							my $note = $packet->{'plaintext'}[0];			# only ever ONE output
+		
+							push @txid, $packet->{'txid'};				# store txid
+		
+							$txn->{$packet->{'txid'}} = {				# store txn
+								value => $note->{'value'}, 
+								memo => $note->{'memo'}, 
+								coin => $packet->{'coin'}, 
+								conf => 0
+							};
+														# trigger website & send data
+														
+							common::website_post($config->{'uri'}, { txid => $packet->{'txid'}, value => $note->{'value'}, memo => $note->{'memo'}, coin => $packet->{'coin'}, conf => 0 } );
+		
+							print Dumper $txn->{$packet->{'txid'}};			# display transaction
+						}
+		
+					}
+		
+					elsif ($packet->{'type'} == $packet::PKT_CONFIRMATION) {
+		
+						TXID: foreach my $tx (@{$packet->{'data'}}) {			# loop through txids in the packet
+		
+							if ( grep { /$tx/ } @txid ) {				# search our txids
+		
+								$txn->{$tx}->{'conf'} = 1;			# update confirmation
+		
+								common::debug(0, "CONFIRMATION : $tx");		# report confirmation
+								print Dumper $txn->{$tx};
+		
+								common::website_post($config->{'uri'}, { txid => $tx, value => $txn->{$tx}->{'value'}, memo => $txn->{$tx}->{'memo'}, coin => $txn->{$tx}->{'coin'}, conf => 1 } );
+								
+								last TXID;
+							}
+						}
+					}
+		
+					elsif ($packet->{'type'} == $packet::PKT_BROADCAST) {
+						common::debug(0, "BROADCAST");
+						print Dumper $packet;
+					}
+		
+					elsif ($packet->{'type'} == $packet::PKT_HEARTBEAT) {
+						common::debug(0, 'HEARTBEART');
+					}
+		
+					elsif ($packet->{'type'} == $packet::PKT_ENCRYPTED) {
+						common::debug(0, 'ENCRYPTED');
+					}
+		
+					else {
+						print "Unknown : " . unpack("H*", decode_base64($buf)) . "\n";
 					}
 				}
 			}
-
-			elsif ($packet->{'type'} == $packet::PKT_BROADCAST) {
-				common::debug(0, "BROADCAST");
-				print Dumper $packet;
-			}
-
-			elsif ($packet->{'type'} == $packet::PKT_HEARTBEAT) {
-				common::debug(0, 'HEARTBEART');
-			}
-
-			elsif ($packet->{'type'} == $packet::PKT_ENCRYPTED) {
-				common::debug(0, 'ENCRYPTED');
-			}
-
-			else {
-				print "Unknown : " . unpack("H*", decode_base64($buf)) . "\n";
-			}
-		}
-	}
-);
-
-$client->connect;										# connect to websocket server
-sleep(2);											# yak-yak needs a little time
-
-$client->write("BASE64:$config->{'ident'}:$config->{'auth'}");					# subscribe for BASE64 transport, send ident & auth
-
-while ($running) {
-
-	if ($tcp_socket) {									# listen to websocket server (if connected)
-
-		my $recv_data;									# read from websocket
-		my $bytes_read = sysread $tcp_socket, $recv_data, 16384;			# make sure its correct
+		);
 	
-		if (!defined $bytes_read) { 
-			common::debug(0, "Failed to read from socket, aborting.");
-			exit;
+		$client->connect;										# connect to websocket server
+		sleep(2);											# yak-yak needs a little time
+	
+		$client->write("BASE64:$config->{'ident'}:$config->{'auth'}");					# subscribe for BASE64 transport, send ident & auth
+	
+		while ($running) {
+	
+			if ($tcp_socket) {									# listen to websocket server (if connected)
+		
+				my $recv_data;									# read from websocket
+				my $bytes_read = sysread $tcp_socket, $recv_data, 16384;			# make sure its correct
+			
+				if (!defined $bytes_read) { 
+					common::debug(0, "Failed to read from socket, aborting.");
+					$running = 0;
+				}
+				elsif ($bytes_read == 0) { 
+					common::debug(0, "Websocket connection terminated.");
+					$running = 0;
+				}
+				$client->read($recv_data); 							# this is where we parse what we read....
+			}
+			usleep 100_00;										# lets not beat up the server, take a nap
 		}
-		elsif ($bytes_read == 0) { 
-			common::debug(0, "Websocket connection terminated.");
-			exit;
-		}
-		$client->read($recv_data); 							# this is where we parse what we read....
 	}
-	usleep 100_00;										# lets not beat up the server, take a nap
+	common::debug(0, "Reconnecting...");								# reconnect to websocket server
 }
 
-common::debug(0, "Bye!");									# don't forget your hat
 exit;
 
