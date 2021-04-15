@@ -505,3 +505,4 @@ sub decrypt_note {
     return( {status => $result, addr => $addr_ret, value => $value_ret, memo => $memo_ret} );
 }
 
+

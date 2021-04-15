@@ -55,7 +55,7 @@ our $PKT_ENCRYPTED_BCAST  = 0xff;									# encrypted data for broadcast
 #	<txid count>	uint32										(number of txids)
 #	<txid data>	<count * 32-bytes>								(txids)
 
-# NODE ANNOUNCEMENT
+# NODE BROADCAST
 #
 #	<type>		u8										('0x04' : type, node service announcement)
 #	<version>	u8										('0x01' : version)
@@ -170,7 +170,7 @@ sub parse {
 		return($data);					
 	}
 
-	elsif ($data->{'type'} == $PKT_BROADCAST) {							# BROADCAST ANNOUNCEMENT
+	elsif ($data->{'type'} == $PKT_BROADCAST) {							# BROADCAST 
 	
 		$data->{'nodename'} = unpack("A512", substr($packet, 2, 512));				# text from node
 		$data->{'nodename'} =~ s/\0//g;								# remove null padding
@@ -284,7 +284,7 @@ sub generate {
 	}	
 
 
-	elsif ($type == $PKT_ANNOUNCE) {								# NODE ANNOUNCEMENT 
+	elsif ($type == $PKT_BROADCAST) {								# NODE BROADCAST 
 
        		$data = pack("A512", $data_raw[0]);							# 512-bytes, message
 		$data .= pack("L", $data_raw[1]);							# 4-bytes, zats per block
