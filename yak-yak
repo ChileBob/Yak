@@ -77,6 +77,9 @@ Net::WebSocket::Server->new(									# setup websocket server
 			
 				my ($conn, $handshake) = @_;
 				$client->{$conn}->{'rate'} = 0;					# initialise rate limiter
+				$client->{$conn}->{'ip'} = $conn->ip();				# remember where they connected from
+
+												# TODO : Check blocked list & do something nasty if needed
 			},
 
 			disconnect => sub {
@@ -100,7 +103,7 @@ Net::WebSocket::Server->new(									# setup websocket server
 					
 					($client->{$conn}->{'transport'}, $client->{$conn}->{'ident'}, $client->{$conn}->{'auth'}) = split(':', $msg);
 					$conn->send_utf8("HELLO");					# say hi
-					print "$client->{$conn}->{'ident'} : Connected\n";
+					print "$client->{$conn}->{'ident'} : $client->{$conn}->{'ip'} : Connected\n";
 				}
 
 				else {								# BASE64 data

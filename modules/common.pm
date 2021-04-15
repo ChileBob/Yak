@@ -58,7 +58,7 @@ sub parse_argv {
 	while (my $arg = shift @argv) {			# loop through args
 
 							# key from by pattern matching value
-		if ($arg =~ m/^web/) {			# websocket server 
+		if ($arg =~ m/^ws/) {			# websocket server 
 			$config->{'web'} = $arg;
 		}
 		elsif ($arg =~ m/^zmq/) {		# ZMQ connection
