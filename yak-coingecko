@@ -169,15 +169,11 @@ while ($running >= 0) {
 							my $json = decode_json($response->{'_content'});					# convert to a hash
 	
 							my @data = ( pack("A16", "CoinGeko") );							# assemble the data, first part is a 16-char string
-							my $quote;
-	
 							foreach my $coin_id ('zcash', 'ycash') {
 								foreach my $currency_id ('usd', 'gbp', 'eur') {
 									push @data, uc(substr($coin_id,0,1) . 'EC' . $currency_id) . $json->{$coin_id}->{$currency_id};
 								}
 							}
-							push @data, $quote;
-
 							push @packet, packet::generate($packet::PKT_TICKER, \@data, $config->{'key'});		# generate packet
 						}
 					}

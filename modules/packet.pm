@@ -227,11 +227,11 @@ sub parse {
 
 		my $records = substr($packet, 22);							# remaining data are fixed length records
 
-		while (my $record = substr($records, 0, 22)) {						# loop through records
+		while (my $record = substr($records, 0, 38)) {						# loop through records
 			my $price = { 
 				coin     => unpack("A3", substr($record, 0, 3)),
 				currency => unpack("A3", substr($record, 3, 3)),
-				quote    => hex(unpack("H*", substr($record, 6, 8))) . "." . hex(unpack("H*", substr($record, 12, 8)))
+				quote    => hex(unpack("H*", substr($record, 6, 8))) . "." . hex(unpack("H*", substr($record, 14, 8)))
 			};
 			$records = substr($records, 22);
 			push @quote, $price;								
@@ -359,15 +359,16 @@ sub generate {
 		foreach my $quote (splice(@data_raw, 1)) {
 
 			if ($quote) {
-				$data .= pack("A6", uc(substr($quote,0,6)));					# 6-bytes, pair code (ie: ZECUSD)
+				$data .= pack("A6", uc(substr($quote,0,6)));				# 6-bytes, pair code (ie: ZECUSD)
 	
-				my @parts = split(/\./, substr($quote,6));
-	
-				if (scalar @parts == 1) {							# some currencies dont have decimails (CLP!)
-					push @parts, 0;
-				}
-				foreach my $part (@parts)  {							# encode each part as 8-bytes
-					$data .= pack("H16", sprintf("%016X", $part));
+				my @parts = split(/\./, substr($quote,6));				# split price into integer & decimal parts
+
+				foreach my $part (@parts) {						# 8-bytes for each part, which is plenty !
+					my $hexpart = sprintf("%X", $part);
+					while (length($hexpart) < 16) {
+						$hexpart = '0' . $hexpart;
+					}
+					$data .= pack("H*", $hexpart);
 				}
 			}
 		}

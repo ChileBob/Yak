@@ -1,9 +1,8 @@
 #!/usr/bin/perl
 
-my $teststr = "123456789012345678901234567890";
+my $integer = 123456;
 
-while (my $three = substr($teststr,0,3)) {
-	print "$three\n";
-	$teststr = substr($teststr,3);
-}
+my $hex = sprintf("%016X", $integer);
+
+print "$integer = $hex\n";
 
