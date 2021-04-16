@@ -30,39 +30,62 @@ our $PKT_ENCRYPTED        = 0x06;									# encrypted data (that we cant read)
 our $PKT_VERSION          = 0x01;									# packet version number
 
 our $PKT_BROADCAST        = 0xf0;									# broadcast packets, not rate limited
-our $PKT_HEARTBEAT        = 0xf1;
+our $PKT_HEARTBEAT        = 0xf1;									# heartbeat, timed event from websocket server
+our $PKT_TICKER           = 0xf2;									# price ticker update
 our $PKT_ENCRYPTED_BCAST  = 0xff;									# encrypted data for broadcast
 
-# TRANSPARENT TRANSCTION NOTIFICATION
+# TRANSPARENT NOTIFICATION (PKT_ZEC_TRANSPARENT, PKT_YEC_TRANSPARENT)
 #
-# 	<type>		u8										('0x01' : type, '0x00' = mempool txn)
-# 	<version>	u8										('0x01' : version)
+# 	<type>		u8										(type)
+# 	<version>	u8										(version)
 # 	<txid>		32-bytes									(txid)
 # 	<taddr count>	uint32										(number of transparent outputs)
 # 	<taddr data>	<taddr_count> * (<amount 8-bytes> + <address 35-bytes>)				(transparent output data)
 
-# SHIELDED TRANSCTION NOTIFICATION
-# 	<type>		u8										('0x02' : type, '0x00' = mempool txn)
-# 	<version>	u8										('0x01' : version)
+# SHIELDED NOTIFICATION (PKT_ZEC_SHIELDED, PKT_YEC_SHIELDED)
+# 	<type>		u8										(type)
+# 	<version>	u8										(version)
 # 	<txid>		32-bytes									(txid)
 # 	<zaddr count>	uint32										(number of shielded outputs)
 #	<zaddr data>	<zaddr_count> * <ciphertext 583-bytes>						(shielded output ciphertext : AES256)
 
-# TRANSACTION CONFIRMATIONS
+# CONFIRMATIONS (PKT_CONFIRMATION)
 #
-#	<type>		u8										('0x03' : type, txn confirmation)
-#	<version>	u8										('0x01' : version)
+#	<type>		u8										(type)
+#	<version>	u8										(version)
 #	<txid count>	uint32										(number of txids)
 #	<txid data>	<count * 32-bytes>								(txids)
 
-# NODE BROADCAST
+# BROADCAST (PKT_ENCRYPTED)
 #
-#	<type>		u8										('0x04' : type, node service announcement)
-#	<version>	u8										('0x01' : version)
+#	<type>		u8										(type)
+#	<version>	u8										(version)
 #	<fee>		uint32										(fee per block, in zats)
 #	<zaddr>		<78-bytes>									(node registration zaddr)
 #	<status>	u8										(node stats, 1 = up)
 #	<message>	<512-bytes>									(ascii text, null padded)
+
+# ENCRYPTED BROADCAST (PKT_ENCRYPTED_BCAST)
+#
+#	<type>		u8										(type)
+#	<version>	u8										(version)
+#	<ciphertext>	<variable>									(ciphertext)
+
+# HEARTBEAT (PKT_HEARTBEAT)
+#
+# 	<type>		u8										(type)
+# 	<version>	u8										(version)
+
+# TICKER (PTK_TICKER)
+#
+# 	<type>		u8										(type)
+# 	<version>	u8										(version)
+# 	<source>	<16-bytes>									(source		(string)
+# 	<timestamp>	uint32										(timestamp	(epoch)
+# 	<data>		<24-bytes. per record>								(3-bytes)	coin 		(ZEC/YEC)
+# 													(3-bytes)	currency	(USD, GBP, EUR)
+# 													(8-bytes)	price		(integer component, hex)
+# 													(8-bytes)	price		(decimal decimal, hex)
 
 my $debug   = 5;											# debug verbosity
 
@@ -193,6 +216,31 @@ sub parse {
 		return($data);		
 	}
 
+	elsif ($data->{'type'} == $PKT_TICKER) {							# TICKER 
+	
+		$data->{'source'} = unpack("A16", substr($packet, 2, 16));				# text from node
+		$data->{'source'} =~ s/\0//g;								# remove null padding
+
+		$data->{'epoch'}   = unpack("L", substr($packet, 18, 4));				# broadcast timestamp (epoch)
+
+		my @quote = ();										# generate prices as array of hashes
+
+		my $records = substr($packet, 22);							# remaining data are fixed length records
+
+		while (my $record = substr($records, 0, 22)) {						# loop through records
+			my $price = { 
+				coin     => unpack("A3", substr($record, 0, 3)),
+				currency => unpack("A3", substr($record, 3, 3)),
+				quote    => hex(unpack("H*", substr($record, 6, 8))) . "." . hex(unpack("H*", substr($record, 12, 8)))
+			};
+			$records = substr($records, 22);
+			push @quote, $price;								
+		}
+		$data->{'price'} = \@quote;
+
+		return($data);
+	}
+
 	else {
 													# if we get this far, we failed to parse 
 		common::debug(0, "packet::parse() : Cant parse packet, type = $data->{'type'}, version = $data->{'version'}");
@@ -288,7 +336,7 @@ sub generate {
 	}	
 
 
-	elsif ($type == $PKT_BROADCAST) {								# NODE BROADCAST 
+	elsif ($type == $PKT_BROADCAST) {								# BROADCAST 
 
        		$data = pack("A512", $data_raw[0]);							# 512-bytes, message
 		$data .= pack("L", $data_raw[1]);							# 4-bytes, zats per block
@@ -301,6 +349,29 @@ sub generate {
 	elsif ($type == $PKT_HEARTBEAT) {								# HEARTBEAT
 
 		push @packet, encode_base64(generate_encrypted($key, $header));				# create packet
+	}
+
+	elsif ($type == $PKT_TICKER) {									# TICKER
+
+		my $data = pack("A16", $data_raw[0]);							# 16-bytes, ascii string, source of prices
+		$data .= pack("L", time());								# epoch time
+
+		foreach my $quote (splice(@data_raw, 1)) {
+
+			if ($quote) {
+				$data .= pack("A6", uc(substr($quote,0,6)));					# 6-bytes, pair code (ie: ZECUSD)
+	
+				my @parts = split(/\./, substr($quote,6));
+	
+				if (scalar @parts == 1) {							# some currencies dont have decimails (CLP!)
+					push @parts, 0;
+				}
+				foreach my $part (@parts)  {							# encode each part as 8-bytes
+					$data .= pack("H16", sprintf("%016X", $part));
+				}
+			}
+		}
+		push @packet, encode_base64(generate_encrypted($key, $header . $data));			# create packet
 	}
 
 	return(@packet);										# return of base64 encoded packets

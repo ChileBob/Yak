@@ -56,7 +56,6 @@ $SIG{INT} = \&shutdown;															# gracefull shutdown
 my $running = 1;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
 my @packet;																# outbound packet buffer
 
-
 common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");									# show connection detail
 common::debug($config->{'debug'}, "WEB: $config->{'web'}");
 
@@ -119,12 +118,12 @@ while ($running >= 0) {
 
 		$client->write("BASE64:$config->{'client_ident'}:$config->{'client_auth'}");						# subscribe for BASE64 transport, send ident & auth
 	
-		while ($running) {
-    
+		while ($running > 0) {	
+
 			if ($tcp_socket) {												# confirm connection is up
 
 				DELIVER: if (scalar @packet > 0) {									# send oldest packet
-	
+
 					$client->write($packet[0]);
 					@packet = splice(@packet, 1);
 	
@@ -146,6 +145,7 @@ while ($running >= 0) {
 	
 				if ($running == 2) {											# shutdown gracefully
 					if (scalar @packet > 0) {
+						sleep(1);
 						goto DELIVER;
 					}
        				        common::debug(0, "\nBye!");									# buffer empty, time to die
@@ -159,23 +159,31 @@ while ($running >= 0) {
 	
 					$config->{'timer_count'} = $config->{'timer_reset'};
 	
-					my $ua = LWP::UserAgent->new(timeout => 10);
+					if ($running == 1) {											# check runtime flag before getting fresh prices
 
-					my $response = $ua->get($config->{'api'});
+						my $ua = LWP::UserAgent->new(timeout => 10);							# talk to ConGecko
+						my $response = $ua->get($config->{'api'});
+	
+						if (eval { decode_json($response->{'_content'}) } ) {						# make sure we got a valid response
 
-					if (eval { decode_json($response->{'_content'}) } ) {
-						my $json = decode_json($response->{'_content'});
-						print Dumper $json;
-						exit;
+							my $json = decode_json($response->{'_content'});					# convert to a hash
+	
+							my @data = ( pack("A16", "CoinGeko") );							# assemble the data, first part is a 16-char string
+							my $quote;
+	
+							foreach my $coin_id ('zcash', 'ycash') {
+								foreach my $currency_id ('usd', 'gbp', 'eur') {
+									push @data, uc(substr($coin_id,0,1) . 'EC' . $currency_id) . $json->{$coin_id}->{$currency_id};
+								}
+							}
+							push @data, $quote;
+
+							push @packet, packet::generate($packet::PKT_TICKER, \@data, $config->{'key'});		# generate packet
+						}
 					}
-					else {
-						print "failed to parse response\n";
-					}
-
-
-					my @announce = ( $config->{'nodename'}, 0, '', 1 );						# announce this node
-					common::debug($config->{'debug'}, "checking node...");						# append status
-					push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});		# add packet to buffer
+				}
+				else {
+					sleep(1);
 				}
 			}
 		}
@@ -191,10 +199,6 @@ exit;
 # Gracefull shutdown
 #
 sub shutdown {
-
-        my @announce = ( $config->{'nodename'}, 0, '', 0 );										# send announcement that we're offline
-
-        push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});						# add packet to buffer
 
 	$running = 2;															# set runtime flag so packet buffer is flushed
 }

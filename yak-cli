@@ -162,17 +162,23 @@ while ($running >= 0) {
 						}
 					}
 		
-					elsif ($packet->{'type'} == $packet::PKT_BROADCAST) {
+					elsif ($packet->{'type'} == $packet::PKT_BROADCAST) {			# broadcast
 						common::debug(0, "BROADCAST");
 						print Dumper $packet;
 					}
 		
-					elsif ($packet->{'type'} == $packet::PKT_HEARTBEAT) {
+					elsif ($packet->{'type'} == $packet::PKT_HEARTBEAT) {			# heartbeat
 						common::debug(0, 'HEARTBEART');
 					}
 		
-					elsif ($packet->{'type'} == $packet::PKT_ENCRYPTED) {
+					elsif ($packet->{'type'} == $packet::PKT_ENCRYPTED) {			# encrypted data we could not read
 						common::debug(0, 'ENCRYPTED');
+					}
+
+					elsif ($packet->{'type'} == $packet::PKT_TICKER) {			# price ticker
+						common::debug(0, 'TICKER');
+
+						print Dumper $packet;
 					}
 				}
 			}
