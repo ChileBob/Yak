@@ -2,19 +2,20 @@
 
 ![Go on, call me Fluffy one more time!](https://github.com/ChileBob/Yak/blob/main/images/yak-600x473.png?raw=true)
 
-- Connects to a Zcash or Ycash node via ZMQ & listens for transactions & blocks.
-- Decrypted shielded outputs with a viewkey, then broadcasts as AES256 ciphertext via a websocket server.
-- Broadcasts transparent transactions and mined txids.
-- Shielded viewkeys for monitoring are received by encrypted memo.
+- Connects to a Zcash or Ycash node via ZMQ, listens for transactions & new blocks.
+- Decrypts shielded outputs with a client viewkey, then broadcasts AES256 encrypted notifications.
+- Broadcasts unencrypted transparent transactions and mined txids.
+- Viewkeys for monitoring shielded transactions are exchanged by encrypted memo.
 
-This is a proof of concept and possibly a REALLY BAD IDEA - use with caution.
+This is a proof of concept and possibly a BAD IDEA - USE WITH CAUTION.
 
 # Current Status
 
 Important, please note :- 
-- No authentication.
 - ZMQ HAS SECURITY IMPLICATIONS - MAKE SURE YOU UNDERSTAND THEM !!!
 - Any device can connect to the websocket server.
+- All devices receive all broadcasts, even encrypted stuff they cant read.
+- Nodes & tickers need encryption keys to post broadcasts.
 
 To enable ZMQ on your ZCASH node, add this to zcash.conf :-  
 - zmqpubrawtx=tcp://127.0.0.1:28232
@@ -52,5 +53,9 @@ yak-yec :-
 - Does everything yak-zec does but does it for Ycash
 - (Incidentally, the idea for this code came from the Ycash people)
 
-Known issues :-
-- The clients do not attempt reconnection if the server is restarted.
+yak-coingeko
+- Broadcasts price updates once a minute.
+- Prices are for Zcash & Ycash
+- Currencies are USD, EUR, GBP
+- See https://coingecko.com/api for more details.
+
