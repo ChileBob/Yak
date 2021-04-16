@@ -1,0 +1,201 @@
+#!/usr/bin/perl
+#
+# yak-coingeko : CoinGecko price streamer
+#
+# MIT License (ChileBob)
+#
+# Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
+# Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
+
+#########################################################################################################################################################################
+#
+# HEALTH WARNING !!!! Running ZMQ on a fullnode has security implications, make sure you understand them !!!!
+#
+#########################################################################################################################################################################
+
+my $config = {																# DEFAULT CONFIGURATION
+
+	nodename => 'CoinGeko (https://coingeko.com/)',											# name/message for announcements
+	key => 'changethiskey',														# encryption key to submit broadcasts
+	timer_reset => 60,														# interval timer reset value (60 seconds)
+	timer_count => 0,														# interval timer count
+	client_auth => 'changethispassword',												# client password, bypasses yak-yak rate limit
+	debug => 5,															# debugging output level
+	web => 'ws://127.0.0.1:8834',													# websocket server
+	api => 'https://api.coingecko.com/api/v3/simple/price?ids=zcash%2Cycash&vs_currencies=usd%2Ceur%2Cgbp'
+};
+
+#########################################################################################################################################################################
+#
+# CHANGING ANYTHING BELOW THIS LINE IS A REALLY BAD IDEA !! 
+#
+#########################################################################################################################################################################
+
+use Data::Dumper;															# debugging
+
+use Time::HiRes q(usleep);
+use IO::Socket::INET;
+use Protocol::WebSocket::Client;
+use LWP::UserAgent;
+use JSON;
+
+use Cwd qw(abs_path);															# get install/working directory
+use File::Basename;
+our $install = dirname(abs_path($0));			
+
+require "$install/modules/common.pm";													# common subs
+require "$install/modules/bech32.pm";													# bech32 encode/decode 
+require "$install/modules/aes256.pm";													# AES256 encrypt/decrypt
+require "$install/modules/packet.pm";													# yak packet generation/parsing
+
+$config->{'client_ident'} = aes256::keyRandom(32,'A'),											# client ident, randomised on startup
+$config = common::parse_argv($config, \@ARGV);												# modify config from command line args
+
+$SIG{INT} = \&shutdown;															# gracefull shutdown
+
+my $running = 1;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
+my @packet;																# outbound packet buffer
+
+
+common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");									# show connection detail
+common::debug($config->{'debug'}, "WEB: $config->{'web'}");
+
+my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});								# WEBSOCKET CLIENT
+
+while ($running >= 0) {
+
+	my $tcp_socket = IO::Socket::INET->new(												# connect to websocket
+		PeerAddr => $web_ip,													#
+		PeerPort => $web_port,													#
+		Proto => 'tcp',														#
+		Blocking => 1														# blocking socket but we dont care
+	);
+
+	if (!$tcp_socket) {														# not connected, delay before retrying
+		my $delay = int rand(5) + 5;												 
+		common::debug ($config->{'debug'}, "WEB: $config->{'web'} : Failed to reconnect!! Trying again in $delay seconds");
+		sleep($delay);
+	}
+	else {																# successful reconnection
+		if ($running == 0) {
+			common::debug(0, "Reconnected");
+			$running = 1;
+		}
+
+		my $client = Protocol::WebSocket::Client->new(url => "$config->{'web'}");						# setup websocket client
+
+		$client->on(														# connect method
+			connect => sub {
+				my $client = shift;
+				sleep(2);												# a little setup time here helps
+    			}
+		);
+	
+		$client->on(
+			write => sub {													# write method
+				my $client = shift;
+				my ($buf) = @_;
+				syswrite $tcp_socket, $buf;
+			}
+		);
+	
+		$client->on(														# read method
+			read => sub {
+				my $client = shift;
+				my ($buf) = @_;
+	
+				if ($buf =~ m/^HELLO/) {										# server welcome message
+					common::debug($config->{'debug'}, "Connected!");
+				}
+				else {													# ignore server responses 'cos we just dont care
+					if ($buf ne 'OK') {											
+#						print "$buf\n";
+					}
+				}
+			}
+		);
+	
+		$client->connect;													# start websocket client
+
+		$client->write("BASE64:$config->{'client_ident'}:$config->{'client_auth'}");						# subscribe for BASE64 transport, send ident & auth
+	
+		while ($running) {
+    
+			if ($tcp_socket) {												# confirm connection is up
+
+				DELIVER: if (scalar @packet > 0) {									# send oldest packet
+	
+					$client->write($packet[0]);
+					@packet = splice(@packet, 1);
+	
+					usleep 100_00;											# short nap, be nice to the server
+	
+					my $recv_data;											# read from websocket
+					my $bytes_read = sysread $tcp_socket, $recv_data, 16384;					# confirm read successful
+   	 
+					if (!defined $bytes_read) { 
+						common::debug(0, "Failed to read from network socket, aborting.");
+						$running = 0;
+					}
+					elsif ($bytes_read == 0) { 
+						common::debug(0, "Websocket connection terminated");
+						$running = 0;
+					}
+					$client->read($recv_data);									# read from websocket
+				}
+	
+				if ($running == 2) {											# shutdown gracefully
+					if (scalar @packet > 0) {
+						goto DELIVER;
+					}
+       				        common::debug(0, "\nBye!");									# buffer empty, time to die
+					exit(0);
+				}
+																	########################################################
+																	# interval timer
+																	#
+				$config->{'timer_count'}--;
+				if ($config->{'timer_count'} <= 0) {    
+	
+					$config->{'timer_count'} = $config->{'timer_reset'};
+	
+					my $ua = LWP::UserAgent->new(timeout => 10);
+
+					my $response = $ua->get($config->{'api'});
+
+					if (eval { decode_json($response->{'_content'}) } ) {
+						my $json = decode_json($response->{'_content'});
+						print Dumper $json;
+						exit;
+					}
+					else {
+						print "failed to parse response\n";
+					}
+
+
+					my @announce = ( $config->{'nodename'}, 0, '', 1 );						# announce this node
+					common::debug($config->{'debug'}, "checking node...");						# append status
+					push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});		# add packet to buffer
+				}
+			}
+		}
+	}
+}
+
+common::debug("\nBye!");														# Bye ! Don't forget to write...
+exit;
+
+
+#######################################################################################################################################
+#
+# Gracefull shutdown
+#
+sub shutdown {
+
+        my @announce = ( $config->{'nodename'}, 0, '', 0 );										# send announcement that we're offline
+
+        push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});						# add packet to buffer
+
+	$running = 2;															# set runtime flag so packet buffer is flushed
+}
+
