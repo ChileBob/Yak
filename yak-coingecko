@@ -15,7 +15,7 @@
 
 my $config = {																# DEFAULT CONFIGURATION
 
-	nodename => 'CoinGeko (https://coingeko.com/)',											# name/message for announcements
+	nodename => 'CoinGecko (https://coingecko.com/)',											# name/message for announcements
 	key => 'changethiskey',														# encryption key to submit broadcasts
 	timer_reset => 60,														# interval timer reset value (60 seconds)
 	timer_count => 0,														# interval timer count
