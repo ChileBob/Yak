@@ -31,7 +31,8 @@ use Digest::SHA qw(sha256);
 
 use Cwd qw(abs_path);										# get install/working directory
 use File::Basename;
-our $install = dirname(abs_path($0));			
+
+our $install = dirname(abs_path($0));								# get install dir at runtime
 
 require "$install/modules/common.pm";								# yak perl modules
 require "$install/modules/aes256.pm";		
@@ -150,7 +151,7 @@ sub pkt_buffer {
 	}
 
 	my $packet = packet::parse($raw, [ $config->{'key'} ], $transport );		# parse what we received
-
+	
 	if ($packet->{'type'} == $packet::PKT_ENCRYPTED_BCAST) {			# was a broadcast encrypted with our key
 
 		$pkt = packet::parse($packet->{'plaintext'}, [ $config->{'key'} ]);	# parse the decrypted

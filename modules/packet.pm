@@ -18,7 +18,7 @@ require "$main::install/modules/aes256.pm";								# AES encrypt/decrypt
 
 my $maxbytes = 4096;											# maximum packet size (websock server hard limit is 16384)
 
-our $shielded_bytes = 576;										# ciphertext length for shielded notifications, used to generate fakes
+our $shielded_bytes = 576;										# ciphertext length for shielded notifications (with authentication), used to generate fakes
 
 our $PKT_ZEC_TRANSPARENT  = 0x01;									# packet types, used outside this package
 our $PKT_ZEC_SHIELDED     = 0x02;
@@ -95,10 +95,10 @@ my $debug   = 5;											# debug verbosity
 #
 sub parse {
 
-	my ($packet, $xfvk, $transport ) = @_;								# binary packet data, bech32 encoded xfvk
+	my ($packet, $keys, $transport ) = @_;								# binary packet data, bech32 encoded xfvk
 
 	my $data;											# hash of update
-	my @viewkeys = @{$xfvk};									# viewkeys to use
+	my @viewkeys = @{$keys};									# viewkeys to use
 	my @item;											# array of objects
 
 	if ($transport eq 'BASE64') {									# convert to binary
@@ -119,7 +119,7 @@ sub parse {
 
 		$data->{'ciphertext'} = substr($packet, 2);						# strip the header
 
-		$data->{'plaintext'} = aes256::decrypt($viewkeys[0], $data->{'ciphertext'});		# try to decrypt with first key
+		$data->{'plaintext'} = aes256::decrypt($viewkeys[0], $data->{'ciphertext'});		# decrypt yak-yak key
 
 		if (!$data->{'plaintext'}) {								# change type if we fail to decrypt
 			$data->{'type'} = $PKT_ENCRYPTED;
@@ -130,21 +130,18 @@ sub parse {
 
 	elsif ( ($data->{'type'} == $PKT_ZEC_TRANSPARENT) || ($data->{'type'} == $PKT_YEC_TRANSPARENT) ) {	# TRANSPARENT TRANSACTIONS
 	
-		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));				# txid
+		$data->{'txid'} = unpack("H64", substr($packet, 2, 32));					# txid
 
-		$data->{'coin'} = 'ZEC';								# coin type
+		$data->{'coin'} = 'ZEC';									# coin type
 		if ($data->{'type'} == $PKT_YEC_TRANSPARENT) {
 			$data->{'coin'} = 'YEC';
 		}
 
-		my $count = unpack("L", substr($packet,34,4));						# count of transparent outputs
-	
-		for ($i = 0; $i < $count; $i++) { 							# transparent outputs
-			
-			push @item, { 
-				value => hex(unpack("H*", substr($packet, (($i*43)+38), 8))),	
-				addr =>  unpack("A35", substr($packet, (($i*43)+46), 35))
-			};
+		my $records = substr($packet, 34);								# extract records
+
+		while (my $record = substr($records, 0, 43)) {
+			push @item, { value => hex(unpack("H*", substr($record, 0, 8))), addr =>  unpack("A35", substr($record, 8, 35)) };
+			$records = substr($records, 43);
 		}
 		$data->{'output'} = \@item;	
 	
@@ -155,30 +152,33 @@ sub parse {
 
 		my @plaintext = ();
 
-		foreach my $key (@viewkeys) {									# try all our viewkeys
+		my $records = substr($packet, 34);								# extract records
 
-			$data->{'txid'} = unpack("H64", substr($packet,2,32));  				# get txid
-	
-			$data->{'coin'} = 'ZEC';								# coin type
-			if ($data->{'type'} == $PKT_YEC_SHIELDED) {
-				$data->{'coin'} = 'YEC';
-			}
+		while (my $ciphertext = substr($records, 0, $shielded_bytes)) {				# loop through output ciphertexts
 
-			for ($i = 0; $i < unpack("L", substr($packet, 34, 4)); $i++) { 				# loop through ciphertexts
-	
-				my $decrypted = aes256::decrypt($key, substr($packet, (($i*$shielded_bytes)+38), $shielded_bytes));
+			SHIELDED_KEYS: foreach my $key (@viewkeys) {									# try all our viewkeys
+
+				my $decrypted = aes256::decrypt($key, $ciphertext);				# attempt to decrypt
 	
 				if ($decrypted) {								# auth included in plaintext
-
+				
 					my $value = hex(unpack("H*", substr($decrypted, 0, 8))),		# value
 					my $memo = unpack("A*", substr($decrypted, 8, 512));			# memo
 					$memo =~ s/\0//g;							# strip null-padding
 					push @plaintext, { value => $value, memo => $memo };			# store plaintext
 				}
 			}
+			$records = substr($records, $shielded_bytes);
 		}
 		
 		if (scalar @plaintext > 0) {								# decryption worked, return plaintext
+
+			$data->{'txid'} = unpack("H64", substr($packet,2,32));  					# get txid
+	
+			$data->{'coin'} = 'ZEC';									# coin type
+			if ($data->{'type'} == $PKT_YEC_SHIELDED) {
+				$data->{'coin'} = 'YEC';
+			}
 			$data->{'plaintext'}  = \@plaintext;			
 		}
 		else {											# decryption failed
@@ -188,11 +188,13 @@ sub parse {
 	}
 
 	elsif ($data->{'type'} == $PKT_CONFIRMATION) {							# TRANSACTION CONFIRMATION (ZCASH)
-	
-		for ($i = 0; $i < unpack("L", substr($packet, 2, 4)); $i++) { 
-			push @item, unpack("H*", substr($packet, (($i*32)+6), 32));
-		}
 
+		my $records = substr($packet, 2);
+
+		while (my $record = substr($records, 0, 32)) {
+			push @item, unpack("H*", $record);
+			$records = substr($records, 32);
+		}
 		$data->{'data'} = \@item;				
 		return($data);					
 	}
@@ -265,7 +267,6 @@ sub generate {
 	if ( ($type == $PKT_ZEC_TRANSPARENT) || ($type == $PKT_YEC_TRANSPARENT) ) {			# TRANSPARENT TRANSACTION NOTIFICATIONS (TADDR/SADDR)
 
 		my $data = '';
-		my $count = 0;
 
 		$header .= pack("H64", $data_raw[0]);							# add txid to header 
 
@@ -273,68 +274,47 @@ sub generate {
 			
 			my $raw = pack("H*", sprintf("%016X", $txn->{'value'})) . pack("A35", $txn->{'address'});
 
-			if (base64_bytes(length($header) + 4 + length($data) + length($raw)) < $maxbytes) {	
-				$count++;
+			if (base64_bytes(length($header) + length($data) + length($raw)) < $maxbytes) {	
 				$data .= $raw;
 			}
 			else  {										# max size, add packet to array & start another
-				push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));
-
+				push @packet, encode_base64(generate_encrypted($header . $data));
 				$data = $raw;								# start a new packet
-				$count = 1;
 			}
 		}
-
-		push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));	# remaining data into new packet
+		push @packet, encode_base64(generate_encrypted($header . $data));			# remaining data into new packet
 	}	
 
 	elsif ( ($type == $PKT_ZEC_SHIELDED ) || ($type == $PKT_YEC_SHIELDED) ) {			# SHIELDED TRANSACTION NOTIFICATIONS (ZADDR/YADDR)
 
 		my $data = '';
-		my $count = 0;
 
 		$header .= pack("H64", $data_raw[0]);							# add txid to header 
 
 		foreach my $txn (splice(@data_raw, 1)) {						# value, address
-			
-			if (base64_bytes(length($header) + 4 + length($data) + length($txn)) < $maxbytes) {	
-				$count++;
-				$data .= $txn;
-			}
-			else  {										# max size, add packet to array & start another
-				push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));
-
-				$data = $txn;								# start a new packet
-				$count = 1;
-			}
+			$data .= $txn;
 		}
-
-		push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));	# remaining data into new packet
+		push @packet, encode_base64(generate_encrypted($header . $data));			# remaining data into new packet
 	}	
 
 	elsif ($type == $PKT_CONFIRMATION) {								# TRANSACTION CONFIRMATIONS
 
 		my $data = '';
-		my $count = 0;
 
 		foreach my $txid (@data_raw) {								# txid, hex-encode string
 			
 			my $raw = pack("H64", $txid);
 
 			if (base64_bytes(length($header) + length($data) + length($raw)) < $maxbytes) {	
-				$count++;
 				$data .= $raw;
 			}
 			else  {										# packet is max size, add to array
-				push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));
-
+				push @packet, encode_base64(generate_encrypted($header . $data));
 				$data = $raw;								# start a new packet
-				$count = 1;
 			}
 		}
-		push @packet, encode_base64(generate_encrypted($key, $header . pack("L", $count) . $data));	# remaining data into new packet
+		push @packet, encode_base64(generate_encrypted($header . $data));			# remaining data into new packet
 	}	
-
 
 	elsif ($type == $PKT_BROADCAST) {								# BROADCAST 
 
@@ -343,12 +323,12 @@ sub generate {
 		$data .= pack("A78", $data_raw[2]);							# registration address
 		$data .= pack("C1", $data_raw[3]);							# 1-byte, status
 
-		push @packet, encode_base64(generate_encrypted($key, $header . $data));			# create packet
+		push @packet, encode_base64(generate_encrypted($header . $data));			# create packet
 	}	
 
 	elsif ($type == $PKT_HEARTBEAT) {								# HEARTBEAT
 
-		push @packet, encode_base64(generate_encrypted($key, $header));				# create packet
+		push @packet, encode_base64(generate_encrypted($header));				# create packet
 	}
 
 	elsif ($type == $PKT_TICKER) {									# TICKER
@@ -372,7 +352,7 @@ sub generate {
 				}
 			}
 		}
-		push @packet, encode_base64(generate_encrypted($key, $header . $data));			# create packet
+		push @packet, encode_base64(generate_encrypted($header . $data));			# create packet
 	}
 
 	return(@packet);										# return of base64 encoded packets
@@ -385,11 +365,11 @@ sub generate {
 #
 sub generate_encrypted {
 
-	my ($key, $plaintext) = @_;									# key (string), plaintext (binary)
+	my ($plaintext) = @_;										# plaintext (binary)
 
 	my $header = pack("C1", $PKT_ENCRYPTED_BCAST) . pack("C1", $PKT_VERSION);			# packet header
 
-	return( $header . aes256::encrypt($key, $plaintext));						
+	return( $header . aes256::encrypt($main::key, $plaintext));					# encrypt using yak-yak key
 }
 
 

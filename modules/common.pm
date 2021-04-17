@@ -9,6 +9,7 @@
 
 package common;
 
+use Data::Dumper;
 use LWP::UserAgent;					# used to POST transaction alerts to URI
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
@@ -100,6 +101,20 @@ sub website_post {
 		return( $browser->post( $uri, [ $data ] ) );
 	}
 }
+
+#########################################################################################################################################################################
+#
+# Check to see if a packet type is listed for delivery
+#
+sub notify_check {
+
+	my ($packet_type, $notifications) = @_;
+
+	if ( grep /$packet_type/, @{$notifications} ) {
+		return(1);
+	}
+}
+
 
 #######################################################################################################################################
 #

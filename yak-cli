@@ -48,6 +48,7 @@ while (my $line = <$handle>) {
 	}
 }
 close ($handle);
+
 common::debug (0, "KEY: Loaded " . scalar @viewkeys . " viewkeys from yak-cli.keys");
 
 #########################################################################################################################################################################
@@ -60,8 +61,6 @@ my $running = 1;										# running flag
 
 my @txid;											# array of txids waiting for confirmation
 my $txn;											# hash of transactions
-
-
 
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});			# break websocket uri into components
 
@@ -120,28 +119,30 @@ while ($running >= 0) {
 					}
 		
 					elsif ( ($packet->{'type'} == $packet::PKT_ZEC_SHIELDED) || ($packet->{'type'} == $packet::PKT_YEC_SHIELDED) ) {
-		
-						if (!exists $txn->{$packet->{'txid'}}) {			# avoid duplicates
+
+						if (!exists $txn->{$packet->{'txid'}}) {			# avoid duplicates, shielded txns gets notifications on mempool & mined
 		
 							common::debug(0, "SHIELDED NOTIFICATION : $packet->{'txid'}");
+
+							push @txid, $packet->{'txid'};				# store txid, used later to catch our confirmation
 		
-							my $note = $packet->{'plaintext'}[0];			# only ever ONE output
-		
-							push @txid, $packet->{'txid'};				# store txid
-		
-							$txn->{$packet->{'txid'}} = {				# store txn
-								value => $note->{'value'}, 
-								memo => $note->{'memo'}, 
-								coin => $packet->{'coin'}, 
-								conf => 0
+							$txn->{$packet->{'txid'}} = {				# store transaction detail
+								value => $packet->{'plaintext'}[0]->{'value'}, 
+								memo  => $packet->{'plaintext'}[0]->{'memo'}, 
+								coin  => $packet->{'coin'}, 
+								conf  => 0 
 							};
-														# trigger website & send data
-														
-							common::website_post($config->{'uri'}, { txid => $packet->{'txid'}, value => $note->{'value'}, memo => $note->{'memo'}, coin => $packet->{'coin'}, conf => 0 } );
-		
-							print Dumper $txn->{$packet->{'txid'}};			# display transaction
+
+							common::website_post( $config->{'uri'}, { 		# trigger website URI
+								txid  => $packet->{'txid'}, 
+								value => $packet->{'plaintext'}[0]->{'value'}, 
+								memo  => $packet->{'plaintext'}[0]->{'memo'}, 
+								coin  => $packet->{'coin'}, 
+								conf  => 0 
+							});
+
+							print Dumper $txn->{$packet->{'txid'}};			# debugging
 						}
-		
 					}
 		
 					elsif ($packet->{'type'} == $packet::PKT_CONFIRMATION) {

@@ -56,8 +56,13 @@ require "$install/modules/bech32.pm";													# bech32 encode/decode
 require "$install/modules/aes256.pm";													# AES256 encrypt/decrypt
 require "$install/modules/packet.pm";													# yak packet generation/parsing
 
+# my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT );				# array of packet types we deliver, others are ignored
+my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION );								
+
 $config->{'client_ident'} = aes256::keyRandom(32,'A'),											# client ident, randomised on startup
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args
+
+our $key = $config->{'key'};														# yak-yak encryption key
 
 $SIG{INT} = \&shutdown;															# gracefull shutdown
 
@@ -71,7 +76,6 @@ common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");									# s
 common::debug($config->{'debug'}, "ZMQ: $config->{'zmq'}");
 common::debug($config->{'debug'}, "WEB: $config->{'web'}");
 
-
 my $ffi = FFI::Platypus->new( api => 1);												# FFI
 $ffi->lib( $config->{'librust'} );													# load library
 
@@ -79,7 +83,6 @@ $ffi->attach( 'librustzcash_xfvk_decrypt_note'  => [ 'int', 'string', 'string', 
 $ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque', 'opaque'  ] => 'int');				# derive address from xfvk
 $ffi->attach( 'librustzcash_crh_ivk'            => [ 'string', 'string', 'opaque' ] => 'void');						# derive ivk from ak & nk
 $ffi->attach( 'librustzcash_xfvk_to_ivk'        => [ 'string', 'opaque' ] => 'int');							# derive ivk from xfvk
-
 
 if ($config->{'xfvk'}) {    
 	push(@viewkey, $config->{'xfvk'});
@@ -104,7 +107,6 @@ $zmq_socket->subscribe('');
 																	#
 my $info  = node_cli('getblockchaininfo', '', 'abort');											# current chain info, abort if node is down
 my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
-
 
 
 my $txn_reg = node_cli("z_listreceivedbyaddress $config->{'addr'}");									# get txns from registration address
@@ -266,86 +268,96 @@ while ($running >= 0) {
 					my @zmq_parts = $zmq_socket->recv_multipart();							# get zmq broadcast
    	 
 					if ($zmq_parts[0] eq 'rawtx') {									# raw transaction    
-	
+
 						my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');		# decode raw transaction using node RPC
 
-						my @vout = @{$txn->{'vout'}};								# TRANSPARENT OUTPUTS
-	
-						if (scalar @vout > 0) {
-       	 
-							my @data = ( $txn->{'txid'} );							# txid is the first record
-       	 
-							foreach $op (@vout) {								# add output details
-								common::debug(0, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
-								push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
+						if (common::notify_check($packet::PKT_YEC_TRANSPARENT, \@notifications)) {
+						
+							my @vout = @{$txn->{'vout'}};								# TRANSPARENT OUTPUTS
+		
+							if (scalar @vout > 0) {
+								my @data = ( $txn->{'txid'} );							# txid is the first record
+								foreach $op (@vout) {								# add output details
+									common::debug(0, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
+									push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
+								}
+								common::debug(0, scalar @vout . " outputs\n");
+								push @packet, packet::generate($packet::PKT_YEC_TRANSPARENT, \@data, $config->{'key'});	# add packet(s) to buffer
 							}
-   	 
-							common::debug(0, scalar @vout . " outputs\n");
-							push @packet, packet::generate($packet::PKT_YEC_TRANSPARENT, \@data, $config->{'key'});	# add packet(s) to buffer
 						}
 	
-						my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};					# SHIELDED OUTPUTS
+						if (common::notify_check($packet::PKT_YEC_SHIELDED, \@notifications)) {
+
+							my @vShieldedOutput = @{$txn->{'vShieldedOutput'}};					# SHIELDED OUTPUTS
 	
-						if (scalar @vShieldedOutput > 0) {
-   	 
-							my @data = ( $txn->{'txid'} );							# txid is the first record
-   	 
-							OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {			# loop through all shielded outputs
+							if (scalar @vShieldedOutput > 0) {
+   		 
+								my @data = ( $txn->{'txid'} );							# txid is the first record
+
+								OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {			# loop through all shielded outputs
+
+									VIEWKEY: foreach my $xfvk (@viewkey) {						# loop through all viewkeys
+
+										my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
 	
-							VIEWKEY: foreach my $xfvk (@viewkey) {						# loop through all viewkeys
-	
-								my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
-	
-								if ($result->{'status'} == 1) {						# decrypted !!! Wooooo!!!! 
-	
-									my $value = hex(unpack("H*", $result->{'value'}));		# convert value from 8-bytes into something more useful
-									my $memo  = unpack("A*", $result->{'memo'});			# convert memo to ascii & strip null padding
-									$memo =~ s/\0//g;
-       	     
-									if ($xfvk eq $viewkey[0]) {					# if this decrypted with our registration viewkey, then its ours
-       	                     
-										my @line = split("\n", $memo);				# memo can be multiline, we have no control on format 
-       	     
-										MEMOLINE : foreach $line (@line) {			# loop through each line
-       	     
-											$line = common::xfvk_check($line);		# check for a valid ExtendedFullViewingKey
-											if ($line) {
-												common::debug(0, "****** SHIELDED REGISTRATION ****** : " . xfvk_to_addr($line) . " : " . $value . " yoshis");
-												push(@viewkey, $line);								# append viewkey to monitored array
-												$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
-												last MEMOLINE;                
+										if ($result->{'status'} == 1) {						# decrypted !!! Wooooo!!!! 
+		
+											my $value = hex(unpack("H*", $result->{'value'}));		# convert value from 8-bytes into something more useful
+											my $memo  = unpack("A*", $result->{'memo'});			# convert memo to ascii & strip null padding
+											$memo =~ s/\0//g;
+       			     
+											if ($xfvk eq $viewkey[0]) {					# if this decrypted with our registration viewkey, then its ours
+
+												my $registered = 0;
+												my @line = split("\n", $memo);				# memo can be multiline, we have no control on format 
+												MEMOLINE : foreach $line (@line) {			# loop through each line
+       			     
+													$line = common::xfvk_check($line);		# check for a valid ExtendedFullViewingKey
+													if ($line) {
+														$registered = 1;
+														print  "*** REGISTRATION *** : " . xfvk_to_addr($line) . " : " . $value . " yoshis\n";
+														push(@viewkey, $line);			# append viewkey to monitored array
+														$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
+														last MEMOLINE;                
+													}
+												}
+												if ($registered == 0) {					# didn't find a viewkey, fake output so dont leak privacy
+													push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	
+												}
 											}
+											else {								# woo!! we decrypted an output for a monitored viewkey
+												print "*** TRANSACTION *** : $value : $memo\n";
+												push @data, aes256::encrypt( $xfvk, $result->{'value'} . $result->{'memo'});	
+											}
+											last VIEWKEY;        
 										}
-										push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	# generate fake output so we dont leak privacy
+										else {
+											push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2));	# fake output, dont leak privacy
+										}
 									}
-	
-									else {								# woo!! we decrypted an output for a monitored viewkey
-										common::debug(0, "******* SHIELDED TRANSACTION ****** : $value : $memo");
-										push @data, aes256::encrypt( $xfvk, $result->{'value'} . $result->{'memo'} );
-									}
-	
-									last VIEWKEY;        
 								}
-								push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2));	# decrypt failed, create fake shielded output so we dont leak privacy
-								}
+								push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data, $config->{'key'} );	# generate packets
 							}
-						push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data, $config->{'key'} );	# generate packets
 						}
 					}
 
 					elsif ($zmq_parts[0] eq 'hashblock') {								# NEW BLOCK
        		             
+
 						$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');			# update block, abort on failure
-		
-						my @data = ();										# CONFIRMATIONS
-						foreach my $txid (@{$block->{'tx'}}) {                                			#
-							common::debug(0, "$txid");                     		       			#
-							push @data, $txid;								#
-						}											#
-						common::debug(0, scalar @data . " txids confirmed\n");                            	#
-						push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'key'});	# add packets to buffer
 
+						if (common::notify_check($packet::PKT_CONFIRMATION, \@notifications)) {			# CONFIRMATIONS
 
+							my @data = ();									# 
+							foreach my $txid (@{$block->{'tx'}}) {                                		#
+								common::debug(0, "$txid");                     		       		#
+								push @data, $txid;							#
+							}										#
+							common::debug(0, scalar @data . " txids confirmed\n");                         
+							push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'key'});
+	
+						}
+	
 						my @validkeys = ( $config->{'xfvk'} );							# CHECK VIEWKEYS FOR EXPIRT
 						foreach my $key (keys %viewkey_expiry) {                               		  	#
 																	#
@@ -502,5 +514,4 @@ sub decrypt_note {
 	);
 	return( {status => $result, addr => $addr_ret, value => $value_ret, memo => $memo_ret} );
 }
-
 

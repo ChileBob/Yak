@@ -39,13 +39,7 @@ sub decrypt {
 
 	my ($key, $ciphertext) = @_;						# key (string), ciphertext (binary)
 
-									       	# ciphertext may have a packet header
-	if ( (length($ciphertext) % 16 != 0) && (substr($ciphertext,0,2) == pack("H*", $packet::PKT_ENCRYPTED . $packet::PKT_VERSION)) ) {
-		print "removing two bytes...\n";
-		$ciphertext = substr($ciphertext,2);
-	}
-	
-	if (length($ciphertext) % 16 == 0) {
+	if (length($ciphertext) % 16 == 0) {						# must be a multiple of blocksize
 
 		if (length($ciphertext) >= 32) {					# make sure we have minimum data, avoids dying horribly
 
@@ -67,12 +61,12 @@ sub decrypt {
 			my $plaintext = $cipher->decrypt(substr($ciphertext, 16));	# decrypt
 	
 			if (substr($plaintext, 0, 32) eq $auth) {			# return plaintext if prefixed with valid authentication
-				return(substr($plaintext, 32))
+				return(substr($plaintext, 32))				# strip auth from plaintext
 			}
 		}
 	}
 	else {
-		print "mangled ciphertext : " . unpack("H*", $ciphertext) . "\n";
+		print "aes256::decrypt() : mangled ciphertext!\n";
 	}
 }
 
