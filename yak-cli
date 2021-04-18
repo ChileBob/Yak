@@ -15,11 +15,11 @@
 use Data::Dumper;										# debugging output
 
 my $config = { 											# DEFAULT CONFIGURATION
-	auth    => 'changethispassword',							# password to bypass yak-yak rate limit
-	web 	=> 'ws://127.0.0.1:8834',							# websocket server 
-	uri     => '',										# URL to post transaction
-	keys    => './yak-cli.keys',								# filename for viewkey storage
-	debug => 5										# debug verbosity
+	web 	    => 'ws://127.0.0.1:8834',							# websocket server 
+	client_type => 'yak-cli',
+	uri         => '',									# URL to post transaction
+	keys        => './yak-cli.keys',							# filename for viewkey storage
+	debug       => 5									# debug verbosity
 };
 
 use Time::HiRes q(usleep);									# high res timer
@@ -34,8 +34,6 @@ require "$install/modules/common.pm";								# common yak subs
 require "$install/modules/bech32.pm";								# bech32 encode/decode 
 require "$install/modules/aes256.pm";								# AES256 encrypt/decrypt
 require "$install/modules/packet.pm";								# yak packet encode/decode
-
-$config->{'ident'} = aes256::keyRandom(32, 'A'),						# create a new random client ident
 
 $config = common::parse_argv($config, \@ARGV); 							# process command line, overrides default config
 
@@ -188,7 +186,7 @@ while ($running >= 0) {
 		$client->connect;										# connect to websocket server
 		sleep(2);											# yak-yak needs a little time
 	
-		$client->write("BASE64:$config->{'ident'}:$config->{'auth'}");					# subscribe for BASE64 transport, send ident & auth
+		$client->write("BASE64:$config->{'client_type'}");						# subscribe for BASE64 transport & send type
 	
 		while ($running) {
 	

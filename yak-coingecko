@@ -15,14 +15,13 @@
 
 my $config = {																# DEFAULT CONFIGURATION
 
-	nodename => 'CoinGecko (https://coingecko.com/)',											# name/message for announcements
-	key => 'changethiskey',														# encryption key to submit broadcasts
-	timer_reset => 30,														# interval timer reset value (60 seconds)
-	timer_count => -1,														# interval timer count
-	client_auth => 'changethispassword',												# client password, bypasses yak-yak rate limit
-	debug => 5,															# debugging output level
-	web => 'ws://127.0.0.1:8834',													# websocket server
-	api => 'https://api.coingecko.com/api/v3/simple/price?ids=zcash%2Cycash&vs_currencies=usd%2Ceur%2Cgbp'
+	nodename    => 'CoinGecko (https://coingecko.com/)',										# name/message for announcements
+	web         => 'ws://127.0.0.1:8834',												# websocket server
+	client_key  => 'changethiskey',													# encryption key to submit broadcasts
+	client_type => 'yak-coingecko',													# client type
+	debug       => 5,														# debugging output level
+	timer       => 60,														# interval timer
+	api         => 'https://api.coingecko.com/api/v3/simple/price?ids=zcash%2Cycash&vs_currencies=usd%2Ceur%2Cgbp'
 };
 
 #########################################################################################################################################################################
@@ -51,12 +50,14 @@ require "$install/modules/packet.pm";													# yak packet generation/parsin
 $config->{'client_ident'} = aes256::keyRandom(32,'A'),											# client ident, randomised on startup
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args
 
-our $key = $config->{'key'};														# transport key needs to be shared with other packages
+our $key = $config->{'client_key'};													# transport key needs to be shared with other packages
 
 $SIG{INT} = \&shutdown;															# gracefull shutdown
 
 my $running = 1;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
 my @packet;																# outbound packet buffer
+
+my $timer = time;															# interval timer 
 
 common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");									# show connection detail
 common::debug($config->{'debug'}, "WEB: $config->{'web'}");
@@ -118,7 +119,7 @@ while ($running >= 0) {
 		$client->connect;													# start websocket client
 		sleep(1);
 
-		$client->write("BASE64:$config->{'client_ident'}:$config->{'client_auth'}");						# subscribe for BASE64 transport, send ident & auth
+		$client->write("BASE64:$config->{'client_type'}");									# subscribe for BASE64 transport & send type
 	
 		while ($running) {	
 
@@ -155,14 +156,12 @@ while ($running >= 0) {
        				        common::debug(0, "\nBye!");									# buffer empty, time to die
 					exit(0);
 				}
-																	########################################################
-																	# interval timer
-																	#
-				$config->{'timer_count'}--;
-				if ($config->{'timer_count'} <= 0) {    
-	
-					$config->{'timer_count'} = $config->{'timer_reset'};
-	
+																
+																	
+				if ( (time - $timer) >= $config->{'timer'}) {   							########################################################
+																	# INTERVAL TIMER	
+					$timer = time + $config->{'timer'};
+
 					my $ua = LWP::UserAgent->new(timeout => 10);							# talk to ConGecko
 					my $response = $ua->get($config->{'api'});
 
@@ -176,7 +175,7 @@ while ($running >= 0) {
 								push @data, uc(substr($coin_id,0,1) . 'EC' . $currency_id) . $json->{$coin_id}->{$currency_id};
 							}
 						}
-						push @packet, packet::generate($packet::PKT_TICKER, \@data, $config->{'key'});		# generate packet
+						push @packet, packet::generate($packet::PKT_TICKER, \@data, $config->{'client_key'});	# generate packet
 					}
 				}
 

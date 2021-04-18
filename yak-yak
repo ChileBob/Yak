@@ -8,7 +8,6 @@
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
 my $config = {											# default configuration
-	auth  => 'changethispassword',								# password to avoid rate limiter
 	key   => 'changethiskey',								# encryption key, nodes must encrypt with this key before sending here
 	limit => 20,										# max number of posts per tick interval 
 	port  =>  8834,										# listening port number
@@ -55,13 +54,13 @@ Net::WebSocket::Server->new(									# setup websocket server
 
 		foreach my $dest ($serv->connections) {						# loop through all connections
 
-			if ( ($client->{$dest}->{'rate'} > $config->{'limit'}) && ($client->{$dest}->{'auth'} ne $config->{'auth'})) {
-				print "$client->{$dest}->{'ident'} : DISCONNECTING : Rate limit exceeded ($client->{$dest}->{'rate'})\n";
+			if ( $client->{$dest}->{'rate'} > $config->{'limit'} ) {
+				print "$client->{$dest}->{'type'} : Rate limit exceeded ($client->{$dest}->{'rate'})\n";
 				$serv->disconnect($dest->{'socket'})
 			}
 			else {
-				if ($client->{$dest}->{'ident'} && $client->{$dest}->{'rate'} > 0) {	# show number of packets received from each client
-					print "$client->{$dest}->{'ident'} : $client->{$dest}->{'rate'}\n";
+				if ($client->{$dest}->{'type'} && $client->{$dest}->{'rate'} > 0) {	# show number of packets received from each client
+					print "$client->{$dest}->{'type'} : $client->{$dest}->{'rate'}\n";
 				}
 				$client->{$dest}->{'rate'} = 0;
 			}
@@ -84,7 +83,7 @@ Net::WebSocket::Server->new(									# setup websocket server
 			},
 
 			disconnect => sub {
-				print "$client->{$conn}->{'ident'} : Disconnected\n";
+				print "$client->{$conn}->{'type'} : Disconnected\n";
 				delete $client->{$conn};
 			},
 
@@ -102,9 +101,9 @@ Net::WebSocket::Server->new(									# setup websocket server
 
 				if ( $msg =~ m/^BINARY/ || $msg =~ m/^BASE64/) {		# subscription
 					
-					($client->{$conn}->{'transport'}, $client->{$conn}->{'ident'}, $client->{$conn}->{'auth'}) = split(':', $msg);
+					($client->{$conn}->{'transport'}, $client->{$conn}->{'type'}) = split(':', $msg);
 					$conn->send_utf8("HELLO");					# say hi
-					print "$client->{$conn}->{'ident'} : $client->{$conn}->{'ip'} : Connected\n";
+					print "$client->{$conn}->{'type'} : $client->{$conn}->{'ip'} : Connected\n";
 				}
 
 				else {								# BASE64 data

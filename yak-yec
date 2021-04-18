@@ -15,17 +15,17 @@
 
 my $config = {																# DEFAULT CONFIGURATION
 
-	nodename => 'ChileBob (YCASH)',													# name/message for announcements
-	key => 'changethiskey',														# encryption key to submit broadcasts
-	fee => 100,															# viewkey monitoring fee (Yatoshis per block)
-	timer_reset => 60,														# interval timer reset value (60 seconds)
-	timer_count => 0,														# interval timer count
-	client_auth => 'changethispassword',												# client password, bypasses yak-yak rate limit
-	debug => 5,															# debugging output level
-	node_client => 'ycash-cli',													# fullnode client binary
+	nodename    => 'ChileBob (YCASH)',												# name/message for announcements
+	client_type => 'yak-yec',													# client type, yak-yak needs to know
+	client_key  => 'changethiskey',													# yak-yak encryption, required to submit notifications
 	zmq => 'tcp://127.0.0.1:28832',													# fullnode zmq
 	web => 'ws://127.0.0.1:8834',													# websocket server
+	timer => 60,															# interval timer
+	fee => 100,															# viewkey monitoring fee (Yatoshis per block)
+	debug => 5,															# debugging output level
+	node_client => 'ycash-cli',													# fullnode client binary
 	librust => './rust/ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
+																	# Viewing key for registration address
 	xfvk => 'zxviews1qdj98nu2qqqqpqxq8g9kn7z45jx3r5ejshvdffw2h2upu7054vhdjg8sjxg6r36mdaa22savtkrtq6nnrd2u3py4q4hns3cpfz0lwuafetv03gxlm0l6cutchpmzgn92zss0wy9g8kr2zrtyeyrtsqwqrf26j58dn9wj7teyad92mk5ymajjzhdhzw2qft8zwyqs7u78wa7zkewl885l8z5rvcvrt4n6w0j06zrpt5tc8zaeusrqdrh8hqvlfpa759yslhy8jsvwf2qmvfv0j'
 };
 
@@ -58,10 +58,9 @@ require "$install/modules/packet.pm";													# yak packet generation/parsin
 
 my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT);				# packet types we deliver, remove from array to disable
 
-$config->{'client_ident'} = aes256::keyRandom(32,'A'),											# client ident, randomised on startup
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args
 
-our $key = $config->{'key'};														# yak-yak encryption key
+our $key = $config->{'client_key'};													# yak-yak encryption key, shared with modules
 
 $SIG{INT} = \&shutdown;															# gracefull shutdown
 
@@ -70,8 +69,8 @@ my @packet;																# outbound packet buffer
 my @viewkey;																# array of xfvks to monitor
 my %viewkey_expiry;															# hash of xfvks expiry block number
 
+my $timer = time;															# interval timer count
 
-common::debug($config->{'debug'}, "ID : $config->{'client_ident'}");									# show connection detail
 common::debug($config->{'debug'}, "ZMQ: $config->{'zmq'}");
 common::debug($config->{'debug'}, "WEB: $config->{'web'}");
 
@@ -100,7 +99,6 @@ my $ctx = ZMQ::FFI->new();														# ZMQ CLIENT
 my $zmq_socket = $ctx->socket(ZMQ_SUB);													# 
 $zmq_socket->connect($config->{'zmq'});													# 
 $zmq_socket->subscribe('');							 
-
 																	########################################################
 																	# FULLNODE RPC 
 																	#
@@ -199,6 +197,7 @@ while ($running >= 0) {
 				}
 				else {													# ignore server responses 'cos we just dont care
 					if ($buf ne 'OK') {											
+# TODO : Could watch for requests here
 #						print "$buf\n";
 					}
 				}
@@ -207,7 +206,7 @@ while ($running >= 0) {
 	
 		$client->connect;													# start websocket client
 
-		$client->write("BASE64:$config->{'client_ident'}:$config->{'client_auth'}");						# subscribe for BASE64 transport, send ident & auth
+		$client->write("BASE64:$config->{'client_type'}");									# subscribe for BASE64 transport & send type
 	
 		while ($running) {
     
@@ -244,10 +243,9 @@ while ($running >= 0) {
 																	########################################################
 																	# interval timer
 																	#
-				$config->{'timer_count'}--;
-				if ($config->{'timer_count'} <= 0) {    
+				if ( (time - $timer) >= $config->{'timer'}) {    
 	
-					$config->{'timer_count'} = $config->{'timer_reset'};
+					$timer = time + $config->{'timer'};
 	
 					my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'} );			# announce this node
 					common::debug($config->{'debug'}, "checking node...");						# append status
@@ -258,7 +256,7 @@ while ($running >= 0) {
 					else {
 						push @announce, 0;
 					}
-					push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});		# add packet to buffer
+					push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});		# add packet to buffer
 				}
 																	
 																	########################################################
@@ -270,7 +268,7 @@ while ($running >= 0) {
 
 						my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');		# decode raw transaction using node RPC
 
-						if (common::notify_check($packet::PKT_YEC_TRANSPARENT, \@notifications)) {
+						if (common::notify_check($packet::PKT_YEC_TRANSPARENT, \@notifications)) {		# check transparent notifications are enabled
 						
 							my @vout = @{$txn->{'vout'}};								# TRANSPARENT OUTPUTS
 		
@@ -281,7 +279,7 @@ while ($running >= 0) {
 									push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
 								}
 								common::debug(0, scalar @vout . " outputs\n");
-								push @packet, packet::generate($packet::PKT_YEC_TRANSPARENT, \@data, $config->{'key'});	# add packet(s) to buffer
+								push @packet, packet::generate($packet::PKT_YEC_TRANSPARENT, \@data, $config->{'client_key'});	# add packet(s) to buffer
 							}
 						}
 	
@@ -307,25 +305,25 @@ while ($running >= 0) {
        			     
 											if ($xfvk eq $viewkey[0]) {					# if this decrypted with our registration viewkey, then its ours
 
-												my $registered = 0;
+												my $registered = 0;					# flag, set if a valid registation is found
 												my @line = split("\n", $memo);				# memo can be multiline, we have no control on format 
 												MEMOLINE : foreach $line (@line) {			# loop through each line
        			     
 													$line = common::xfvk_check($line);		# check for a valid ExtendedFullViewingKey
 													if ($line) {
 														$registered = 1;
-														print  "*** REGISTRATION *** : " . xfvk_to_addr($line) . " : " . $value . " yoshis\n";
+														common::debug($config->{'debug'}, "*** REGISTRATION *** : " . xfvk_to_addr($line) . " : " . $value . " yoshis");
 														push(@viewkey, $line);			# append viewkey to monitored array
 														$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
 														last MEMOLINE;                
 													}
 												}
-												if ($registered == 0) {					# didn't find a viewkey, fake output so dont leak privacy
+												if ($registered == 0) {					# didn't find a viewkey, fake output to avoid leaking privacy
 													push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	
 												}
 											}
 											else {								# woo!! we decrypted an output for a monitored viewkey
-												print "*** TRANSACTION *** : $value : $memo\n";
+												common::debug($config->{'debug'}, "*** TRANSACTION *** : $value : $memo");
 												push @data, aes256::encrypt( $xfvk, $result->{'value'} . $result->{'memo'});	
 											}
 											last VIEWKEY;        
@@ -335,7 +333,7 @@ while ($running >= 0) {
 										}
 									}
 								}
-								push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data, $config->{'key'} );	# generate packets
+								push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data, $config->{'client_key'} );	# generate packets
 							}
 						}
 					}
@@ -353,11 +351,10 @@ while ($running >= 0) {
 								push @data, $txid;							#
 							}										#
 							common::debug(0, scalar @data . " txids confirmed\n");                         
-							push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'key'});
-	
+							push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'client_key'});
 						}
 	
-						my @validkeys = ( $config->{'xfvk'} );							# CHECK VIEWKEYS FOR EXPIRT
+						my @validkeys = ( $config->{'xfvk'} );							# CHECK VIEWKEYS FOR EXPIRY
 						foreach my $key (keys %viewkey_expiry) {                               		  	#
 																	#
 							if ($viewkey_expiry{$key} >= $block->{'height'}) {				# this one is still good
@@ -392,7 +389,7 @@ sub shutdown {
 
         my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'}, 0 );						# send announcement that we're offline
 
-        push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});						# add packet to buffer
+        push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});					# add packet to buffer
 
 	$running = 2;															# set runtime flag so packet buffer is flushed
 }
@@ -417,7 +414,7 @@ sub node_cli {
 		if ($failure eq 'abort') {												# 'abort' flag means we shutdown now
 
         		my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'}, 0 );				# send announcement that we're offline
-        		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'key'});				# add packet to buffer
+        		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});			# add packet to buffer
 			$running = 2;													# set runtime flag so packet buffer is flushed
 		}
 	}
