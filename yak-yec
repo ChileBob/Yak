@@ -25,7 +25,8 @@ my $config = {																# DEFAULT CONFIGURATION
 	debug => 5,															# debugging output level
 	node_client => 'ycash-cli',													# fullnode client binary
 	librust => './rust/ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
-																	# Viewing key for registration address
+
+																	# Viewing key for registration address (get this from YEClite)
 	xfvk => 'zxviews1qdj98nu2qqqqpqxq8g9kn7z45jx3r5ejshvdffw2h2upu7054vhdjg8sjxg6r36mdaa22savtkrtq6nnrd2u3py4q4hns3cpfz0lwuafetv03gxlm0l6cutchpmzgn92zss0wy9g8kr2zrtyeyrtsqwqrf26j58dn9wj7teyad92mk5ymajjzhdhzw2qft8zwyqs7u78wa7zkewl885l8z5rvcvrt4n6w0j06zrpt5tc8zaeusrqdrh8hqvlfpa759yslhy8jsvwf2qmvfv0j'
 };
 
@@ -42,7 +43,6 @@ use Time::HiRes q(usleep);														# ZMQ polling interval timer
 use Math::BigInt;															# at some point we need to handle 256-bit ints
 use IO::Socket::INET;															# general purpose networking
 use Protocol::WebSocket::Client;													# websocket client
-#use String::HexConvert ':all';														# convert hex-encoded strings to ascii
 use FFI::Platypus;															# FFI interface to librustzcash
 use FFI::Platypus::Buffer qw( scalar_to_buffer);											# 
 use FFI::Platypus::Memory qw( malloc memcpy free);											# 
@@ -72,9 +72,6 @@ our @viewkey;																# client viewkeys with active monitoring
 
 my $timer = time;															# interval timer count
 
-common::debug($config->{'debug'}, "ZMQ: $config->{'zmq'}");
-common::debug($config->{'debug'}, "WEB: $config->{'web'}");
-
 my $ffi = FFI::Platypus->new( api => 1);												# FFI
 $ffi->lib( $config->{'librust'} );													# load library
 
@@ -83,50 +80,50 @@ $ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque
 $ffi->attach( 'librustzcash_crh_ivk'            => [ 'string', 'string', 'opaque' ] => 'void');						# derive ivk from ak & nk
 $ffi->attach( 'librustzcash_xfvk_to_ivk'        => [ 'string', 'opaque' ] => 'int');							# derive ivk from xfvk
 
+$config->{'xfvk'} = common::xfvk_check($config->{'xfvk'});										# check registration viewkey is valid
+
 if ($config->{'xfvk'}) {    														# registration viewkey
-
 	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});										# derive address
-	common::debug(0, "REG: $config->{'addr'}");
-
 	$config->{'ivk'}  = xfvk_to_ivk($config->{'xfvk'});										# derive ivk
-	common::debug(0, "IVK: $config->{'ivk'}");
 }
 else {																	# MUST have a valid registration viewkey
 	print("Registration viewkey is NOT VALID ! Aborting\n");
 	exit(1);
 }
+$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;											# registration viewkey never expires
 
-my $ctx = ZMQ::FFI->new();														# ZMQ CLIENT 
-my $zmq_socket = $ctx->socket(ZMQ_SUB);													# 
-$zmq_socket->connect($config->{'zmq'});													# 
-$zmq_socket->subscribe('');							 
-																	########################################################
-																	# FULLNODE RPC 
-																	#
+common::debug(o, "ZMQ: $config->{'zmq'}");												# show config
+common::debug(0, "WEB: $config->{'web'}");
+common::debug(0, "REG: $config->{'addr'}");
+common::debug(0, "IVK: $config->{'ivk'}");
+
 my $info  = node_cli('getblockchaininfo', '', 'abort');											# current chain info, abort if node is down
 my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
 
+# TODO: Delay here if the node is NOT fully synched
 
-my $txn_reg = node_cli("z_listreceivedbyaddress $config->{'addr'}");									# get txns from registration address
-if (!$txn_reg) {
-	common::debug(0, "The registration zaddr (or viewkey) is not in the node wallet!! Aborting!!");
-	common::debug(0, "Import the IVK (incoming viewkey) to the fullnode and try again.");
-	exit(1);
-}
+my $ctx = ZMQ::FFI->new();														# ZMQ CONNECTION
+my $zmq_socket = $ctx->socket(ZMQ_SUB);													 
+$zmq_socket->connect($config->{'zmq'});													 
+$zmq_socket->subscribe('');							 
 
-$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;
-
-foreach my $txn ( @{$txn_reg} ) {													# VIEWKEY REGISTRATION 
-
+my $txn_reg = node_cli("z_listreceivedbyaddress $config->{'addr'}");									# CLIENT VIEWKEY REGISTRATION
+if (!$txn_reg) {															#
+	common::debug(0, "The registration zaddr (or viewkey) is not in the node wallet!! Aborting!!");					#
+	common::debug(0, "Import the IVK (incoming viewkey) to the fullnode and try again.");						#
+	exit(1);															#
+}																	#
+																	#
+foreach my $txn ( @{$txn_reg} ) {													# 
+																	#
 	my $txn_detail = node_cli("gettransaction", $txn->{'txid'}, '');								# get transaction detail
 	my $txn_block  = node_cli("getblock", $txn_detail->{'blockhash'}, '');								# get block transaction was mined in
-
+																	#
 	if (my $xfvk = common::memo_to_xfvk($txn->{'memo'})) {										# search memo for viewkey
-		@viewkey = common::xfvk_monitor($xfvk, ($txn->{'amount'} * 100000000), $txn_block->{'height'}, $block->{'height'});
-	}
-}
-print "Loaded " . scalar @viewkey . " client viewkeys\n";
-
+		@viewkey = common::xfvk_monitor($xfvk, ($txn->{'amount'} * 100000000), $txn_block->{'height'}, $block->{'height'});	#
+	}																#
+}																	#
+print "Loaded " . scalar @viewkey . " client viewkey(s)\n";										#
 
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});								# WEBSOCKET CLIENT
 
@@ -155,7 +152,7 @@ while ($running >= 0) {
 		$client->on(														# connect method
 			connect => sub {
 				my $client = shift;
-				sleep(2);												# a little setup time here helps
+				sleep(2);												# little setup time here helps
     			}
 		);
 	
@@ -200,17 +197,19 @@ while ($running >= 0) {
 					usleep 100_00;											# short nap, be nice to the server
 	
 					my $recv_data;											# read from websocket
-					my $bytes_read = sysread $tcp_socket, $recv_data, 16384;					# confirm read successful
+					my $bytes_read = sysread $tcp_socket, $recv_data, 16384;					# 
    	 
-					if (!defined $bytes_read) { 
+					if (!defined $bytes_read) { 									# confirm read successful
 						common::debug(0, "Failed to read from network socket, aborting.");
-						$running = 0;
+						exit(1);
 					}
 					elsif ($bytes_read == 0) { 
-						common::debug(0, "Websocket connection terminated");
-						$running = 0;
+						common::debug(0, "Websocket connection terminated, aborting");
+						exit(1);
 					}
-					$client->read($recv_data);									# read from websocket
+					else {
+						$client->read($recv_data);								# read from websocket (blocking)
+					}
 				}
 	
 				if ($running == 2) {											# shutdown gracefully
@@ -223,7 +222,6 @@ while ($running >= 0) {
 
 				interval_timer();											# timed events
 																	
-
 																	########################################################
 				while ($zmq_socket->has_pollin) {									# ZMQ
     
@@ -256,7 +254,7 @@ while ($running >= 0) {
    		 
 								my @data = ( $txn->{'txid'} );							# txid is the first record
 
-								OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {			# loop through all shielded outputs
+								foreach my $vout (@{$txn->{'vShieldedOutput'}}) {				# loop through shielded outputs
 
 									VIEWKEY: foreach my $xfvk ($config->{'xfvk'}, @viewkey) {			# loop through all viewkeys
 
@@ -265,33 +263,32 @@ while ($running >= 0) {
 										if ($result->{'status'} == 1) {						# decrypted !!! Wooooo!!!! 
 		
 											my $value = hex(unpack("H*", $result->{'value'}));		# convert value to yoshis
-
 											my $memo  = unpack("A*", $result->{'memo'});			# convert memo to ascii
 											$memo =~ s/\0//g;
 
-											if ($xfvk eq $$config->{'xfvk'}) {				# registration viewkey, so its ours
+											if ($xfvk eq $config->{'xfvk'}) {				# registration viewkey, so its ours
 
-												if (my $newkey = common::memo_to_xfvk($result->{'memo'})) {					# memo had a viewkey
+												if (my $newkey = common::memo_to_xfvk($result->{'memo'})) {						# viewkey found
 												
-													common::debug($config->{'debug'}, "*** REGISTRATION *** : " . xfvk_to_addr($newkey) . " : " . $value);
-
+													common::debug($config->{'debug'}, "REGISTRATION : " . xfvk_to_addr($newkey) . " : " . $value);
 													@viewkey = common::xfvk_monitor($newkey, $value, $block->{'height'}, $block->{'height'});	# add to monitoring
-
-													push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 		# fake output, dont leak privacy
+													push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 			# dont leak privacy
 												}
 											}
-											else {								# decrypted output for a monitored viewkey
-												common::debug($config->{'debug'}, "*** SHIELDED TRANSACTION ***");
+
+											else {										# decrypted output for a monitored viewkey
+
+												common::debug($config->{'debug'}, "SHIELDED TRANSACTION");
 												push @data, aes256::encrypt( $xfvk, $result->{'value'} . $result->{'memo'});	
 											}
-											last VIEWKEY;        
+											last VIEWKEY;        								# skip remaining viewkeys
 										}
 										else {
-											push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2));	# fake output, dont leak privacy
+											push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2));		# fake output, dont leak privacy
 										}
 									}
 								}
-								push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data, $config->{'client_key'} );	# generate packets
+								push @packet, packet::generate( $packet::PKT_YEC_SHIELDED, \@data, $config->{'client_key'} );		# generate packets
 							}
 						}
 					}
@@ -311,7 +308,7 @@ while ($running >= 0) {
 							push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'client_key'});
 						}
 	
-						@viewkey = xfvk_active($block->{'height'});						# check viewkeys for expiry
+						@viewkey = common::xfvk_active($block->{'height'});					# check viewkeys for expiry
 					}
 				}
 	
