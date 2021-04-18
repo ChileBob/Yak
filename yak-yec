@@ -21,7 +21,7 @@ my $config = {																# DEFAULT CONFIGURATION
 	zmq => 'tcp://127.0.0.1:28832',													# fullnode zmq
 	web => 'ws://127.0.0.1:8834',													# websocket server
 	timer => 60,															# interval timer
-	fee => 100,															# viewkey monitoring fee (Yatoshis per block)
+	fee => 1000,															# viewkey monitoring fee (Yatoshis per block)
 	debug => 5,															# debugging output level
 	node_client => 'ycash-cli',													# fullnode client binary
 	librust => './rust/ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
@@ -42,7 +42,7 @@ use Time::HiRes q(usleep);														# ZMQ polling interval timer
 use Math::BigInt;															# at some point we need to handle 256-bit ints
 use IO::Socket::INET;															# general purpose networking
 use Protocol::WebSocket::Client;													# websocket client
-use String::HexConvert ':all';														# convert hex-encoded strings to ascii
+#use String::HexConvert ':all';														# convert hex-encoded strings to ascii
 use FFI::Platypus;															# FFI interface to librustzcash
 use FFI::Platypus::Buffer qw( scalar_to_buffer);											# 
 use FFI::Platypus::Memory qw( malloc memcpy free);											# 
@@ -66,8 +66,9 @@ $SIG{INT} = \&shutdown;															# gracefull shutdown
 
 my $running = 1;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
 my @packet;																# outbound packet buffer
-my @viewkey;																# array of xfvks to monitor
-my %viewkey_expiry;															# hash of xfvks expiry block number
+
+our $monitored;																# hash of monitored viewkeys
+our @viewkey;																# client viewkeys with active monitoring
 
 my $timer = time;															# interval timer count
 
@@ -82,12 +83,12 @@ $ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque
 $ffi->attach( 'librustzcash_crh_ivk'            => [ 'string', 'string', 'opaque' ] => 'void');						# derive ivk from ak & nk
 $ffi->attach( 'librustzcash_xfvk_to_ivk'        => [ 'string', 'opaque' ] => 'int');							# derive ivk from xfvk
 
-if ($config->{'xfvk'}) {    
-	push(@viewkey, $config->{'xfvk'});
-	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});										# derive address from xfvk
+if ($config->{'xfvk'}) {    														# registration viewkey
+
+	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});										# derive address
 	common::debug(0, "REG: $config->{'addr'}");
 
-	$config->{'ivk'} = xfvk_to_ivk($config->{'xfvk'});										# derive the ivk
+	$config->{'ivk'}  = xfvk_to_ivk($config->{'xfvk'});										# derive ivk
 	common::debug(0, "IVK: $config->{'ivk'}");
 }
 else {																	# MUST have a valid registration viewkey
@@ -113,39 +114,18 @@ if (!$txn_reg) {
 	exit(1);
 }
 
+$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;
+
 foreach my $txn ( @{$txn_reg} ) {													# VIEWKEY REGISTRATION 
 
 	my $txn_detail = node_cli("gettransaction", $txn->{'txid'}, '');								# get transaction detail
-	my $txn_block = node_cli("getblock", $txn_detail->{'blockhash'}, '');								# get block transaction was mined in
+	my $txn_block  = node_cli("getblock", $txn_detail->{'blockhash'}, '');								# get block transaction was mined in
 
-	my @line = split("\n", hex_to_ascii($txn->{'memo'}));										# convert memos to ascii, split into lines
-
-	foreach $line (@line) {														# we don't control the format so check each line
-		$line =~ s/\0//g;													# strip nulls
-
-		if (common::xfvk_check($line)) {											# check for valid extended full viewing key
-
-			my $status = "ACTIVE ";
-			my $endblock = int ($txn->{'amount'} / ($config->{'fee'}/100000000)) + $txn_block->{'height'};
-
-			if ($endblock < $txn_block->{'height'}) {									# expired registration, don't load the viewkey
-				$status = "Expired";
-			}
-			else {														# active registration
-
-				if (!grep { /$line/ } @viewkey) {
-					push(@viewkey, $line);    
-					print "$status : Blks: $txn_block->{'height'} - $endblock, " . xfvk_to_addr($line) . " : Added\n";
-				}
-				else {
-					print "$status : Blks: $txn_block->{'height'} - $endblock, " . xfvk_to_addr($line) . " : Updated\n";
-				}
-				$viewkey_expiry{$line} = $endblock;									# log the expiry block
-			}
-		}
+	if (my $xfvk = common::memo_to_xfvk($txn->{'memo'})) {										# search memo for viewkey
+		@viewkey = xfvk_monitor($xfvk, ($txn->{'amount'} * 100000000), $txn_block->{'height'}, $block->{'height'});
 	}
 }
-print "Loaded " . scalar @viewkey . " viewkeys\n";
+print "Loaded " . scalar @viewkey . " client viewkeys\n";
 
 
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});								# WEBSOCKET CLIENT
@@ -240,25 +220,10 @@ while ($running >= 0) {
        				        common::debug(0, "\nBye!");									# buffer empty, time to die
 					exit(0);
 				}
-																	########################################################
-																	# interval timer
-																	#
-				if ( (time - $timer) >= $config->{'timer'}) {    
-	
-					$timer = time + $config->{'timer'};
-	
-					my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'} );			# announce this node
-					common::debug($config->{'debug'}, "checking node...");						# append status
-	
-					if (node_cli('getblockchaininfo', '', '')) {
-						push @announce, 1;
-					}
-					else {
-						push @announce, 0;
-					}
-					push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});		# add packet to buffer
-				}
+
+				interval_timer();											# timed events
 																	
+
 																	########################################################
 				while ($zmq_socket->has_pollin) {									# ZMQ
     
@@ -272,14 +237,14 @@ while ($running >= 0) {
 						
 							my @vout = @{$txn->{'vout'}};								# TRANSPARENT OUTPUTS
 		
-							if (scalar @vout > 0) {
-								my @data = ( $txn->{'txid'} );							# txid is the first record
-								foreach $op (@vout) {								# add output details
+							if (scalar @vout > 0) {												# anything to send ?
+
+								my @data = ( $txn->{'txid'} );										# txid is the first record
+								foreach $op (@vout) {											# add outputs
 									common::debug(0, "$op->{'scriptPubKey'}->{'addresses'}[0] : $op->{'valueZat'}");
 									push @data, { value => $op->{'valueZat'}, address => $op->{'scriptPubKey'}->{'addresses'}[0] };
 								}
-								common::debug(0, scalar @vout . " outputs\n");
-								push @packet, packet::generate($packet::PKT_YEC_TRANSPARENT, \@data, $config->{'client_key'});	# add packet(s) to buffer
+								push @packet, packet::generate($packet::PKT_YEC_TRANSPARENT, \@data, $config->{'client_key'});		# add to buffer
 							}
 						}
 	
@@ -293,37 +258,30 @@ while ($running >= 0) {
 
 								OUTPUT: foreach my $vout (@{$txn->{'vShieldedOutput'}}) {			# loop through all shielded outputs
 
-									VIEWKEY: foreach my $xfvk (@viewkey) {						# loop through all viewkeys
+									VIEWKEY: foreach my $xfvk ($config->{'xfvk'}, @viewkey) {			# loop through all viewkeys
 
 										my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
 	
 										if ($result->{'status'} == 1) {						# decrypted !!! Wooooo!!!! 
 		
-											my $value = hex(unpack("H*", $result->{'value'}));		# convert value from 8-bytes into something more useful
-											my $memo  = unpack("A*", $result->{'memo'});			# convert memo to ascii & strip null padding
-											$memo =~ s/\0//g;
-       			     
-											if ($xfvk eq $viewkey[0]) {					# if this decrypted with our registration viewkey, then its ours
+											my $value = hex(unpack("H*", $result->{'value'}));		# convert value to yoshis
 
-												my $registered = 0;					# flag, set if a valid registation is found
-												my @line = split("\n", $memo);				# memo can be multiline, we have no control on format 
-												MEMOLINE : foreach $line (@line) {			# loop through each line
-       			     
-													$line = common::xfvk_check($line);		# check for a valid ExtendedFullViewingKey
-													if ($line) {
-														$registered = 1;
-														common::debug($config->{'debug'}, "*** REGISTRATION *** : " . xfvk_to_addr($line) . " : " . $value . " yoshis");
-														push(@viewkey, $line);			# append viewkey to monitored array
-														$viewkey_expiry{$line} = ($value / $config->{'fee'}) + $block->{'height'};	# append expiry blocknumber
-														last MEMOLINE;                
-													}
-												}
-												if ($registered == 0) {					# didn't find a viewkey, fake output to avoid leaking privacy
-													push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 	
+											my $memo  = unpack("A*", $result->{'memo'});			# convert memo to ascii
+											$memo =~ s/\0//g;
+
+											if ($xfvk eq $$config->{'xfvk'}) {				# registration viewkey, so its ours
+
+												if (my $newkey = common::memo_to_xfvk($result->{'memo'})) {					# memo had a viewkey
+												
+													common::debug($config->{'debug'}, "*** REGISTRATION *** : " . xfvk_to_addr($newkey) . " : " . $value);
+
+													@viewkey = xfvk_monitor($newkey, $value, $block->{'height'}, $block->{'height'});	# add to monitoring
+
+													push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 		# fake output, dont leak privacy
 												}
 											}
-											else {								# woo!! we decrypted an output for a monitored viewkey
-												common::debug($config->{'debug'}, "*** TRANSACTION *** : $value : $memo");
+											else {								# decrypted output for a monitored viewkey
+												common::debug($config->{'debug'}, "*** SHIELDED TRANSACTION ***");
 												push @data, aes256::encrypt( $xfvk, $result->{'value'} . $result->{'memo'});	
 											}
 											last VIEWKEY;        
@@ -339,7 +297,6 @@ while ($running >= 0) {
 					}
 
 					elsif ($zmq_parts[0] eq 'hashblock') {								# NEW BLOCK
-       		             
 
 						$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');			# update block, abort on failure
 
@@ -354,18 +311,7 @@ while ($running >= 0) {
 							push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'client_key'});
 						}
 	
-						my @validkeys = ( $config->{'xfvk'} );							# CHECK VIEWKEYS FOR EXPIRY
-						foreach my $key (keys %viewkey_expiry) {                               		  	#
-																	#
-							if ($viewkey_expiry{$key} >= $block->{'height'}) {				# this one is still good
-								push(@validkeys, $key);                                  		# 
-							}										#
-							else {										# this one can go
-								common::debug($config->{'debug'}, "Key Expired : $key");		#
-								delete $viewkey_expiry{$key};						#
-							}										#
-						}											#
-						@viewkey = @validkeys;									# 
+						@viewkey = xfvk_active($block->{'height'});						# check viewkeys for expiry
 					}
 				}
 	
@@ -392,6 +338,29 @@ sub shutdown {
         push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});					# add packet to buffer
 
 	$running = 2;															# set runtime flag so packet buffer is flushed
+}
+
+#######################################################################################################################################
+#
+# Interval timer
+#
+sub interval_timer {
+																
+	if ( (time - $timer) >= $config->{'timer'}) {    										
+	
+		$timer = time + $config->{'timer'};
+
+		my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'} );						# announce this node
+		common::debug($config->{'debug'}, "checking node...");		
+
+		if (node_cli('getblockchaininfo', '', '')) {
+			push @announce, 1;
+		}
+		else {
+			push @announce, 0;
+		}
+		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});	
+	}
 }
 
 
@@ -510,4 +479,75 @@ sub decrypt_note {
 	);
 	return( {status => $result, addr => $addr_ret, value => $value_ret, memo => $memo_ret} );
 }
+
+
+
+#######################################################################################################################################
+#
+# Maintain hash of monitored viewkeys, returns arrayref of viewkeys with active monitoring
+#
+sub xfvk_monitor {
+
+	my ($xfvk, $amount, $height_reg, $height) = @_;			# viewkey, fee per block, block height of registration, current block height
+
+	if ($config->{'fee'} > 0) {					# calculate expiry block if a fee was set
+		$blocks = int ($amount / $config->{'fee'});
+	}
+
+
+	if (!exists($monitored->{$xfvk})) { 				# viewkey not already registered
+
+		if ($config->{'fee'} > 0) {					# calculate expiry block if a fee was set
+			$monitored->{$xfvk} = { height => $height_reg, fee => $config->{'fee'}, expiry => ($blocks + $height_reg)};
+		}
+		else {								# no fee set, activate keys 
+			$monitored->{$xfvk} = { height => $height_reg, fee => $config->{'fee'}, expiry => -1};
+		}
+	}
+
+	else {								# viewkey already registered
+
+		if ($config->{'fee'} > 0) {					# fee exists
+
+			if ($monitored->{$xfvk}->{'expiry'} < $height ) {	# key is active, extend the expiry block
+				$monitored->{$xfvk}->{'expiry'} += $blocks;
+			}
+			else {							# key expired, set expiry block from current
+				$monitored->{$xfvk}->{'expiry'} = ($blocks + $height_reg);
+			}
+		}
+	}
+
+	return(xfvk_active($height));					# return array of active keys
+}
+
+#######################################################################################################################################
+#
+# Generate array of viewkeys to monitor, reads from global hash of keys
+#
+
+sub xfvk_active {
+
+	my ($height) = @_;
+
+	my @active = ();						
+
+	foreach my $key (keys %$monitored) {					# activate/deactivate keys
+
+		if ( $monitored->{$key}->{'expiry'} == -1) {			# activate, no expiry block set
+			$monitored->{$key}->{'active'} = 1;
+			push @active, $key;
+		}
+		elsif ( $monitored->{$key}->{'expiry'} > $height) {		# activate, expiry block not mined 
+			$monitored->{$key}->{'active'} = 1;
+			push @active, $key;
+		}
+		else {								# deactivate, default
+			$monitored->{$key}->{'active'} = 0;
+		}
+	}
+
+	return(\@active);							# return arrayref of keys to monitor
+}
+
 

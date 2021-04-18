@@ -11,6 +11,7 @@ package common;
 
 use Data::Dumper;
 use LWP::UserAgent;					# used to POST transaction alerts to URI
+use String::HexConvert ':all';				# convert memo hex-encoded strings
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
 
@@ -140,5 +141,22 @@ sub xfvk_check {
     return($xfvk_str);									# viewing key is valid
 }
 
-1;							# all packages are true, especially the ones that are not
 
+#######################################################################################################################################
+#
+# Search memo text for Extended Full Viewing Key
+#
+sub memo_to_xfvk {
+
+	my ($memo) = @_;
+
+	my @line = split("\n", hex_to_ascii($memo));					# convert memo to ascii, split into lines
+
+	foreach $line (@line) {								# we don't control the format so check each line
+		$line =~ s/\0//g;							# strip nulls
+
+		if (my $xfvk = xfvk_check($line)) {					# check for valid extended full viewing key
+			return($xfvk);
+		}
+	}
+}

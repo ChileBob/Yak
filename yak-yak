@@ -9,7 +9,7 @@
 
 my $config = {											# default configuration
 	key   => 'changethiskey',								# encryption key, nodes must encrypt with this key before sending here
-	limit => 20,										# max number of posts per tick interval 
+	limit => 100,										# max number of posts per tick interval 
 	port  =>  8834,										# listening port number
 	tick  =>  10,										# tick interval (seconds)
 	tracker => 100										# packet tracker (hash of packets))
@@ -83,7 +83,9 @@ Net::WebSocket::Server->new(									# setup websocket server
 			},
 
 			disconnect => sub {
-				print "$client->{$conn}->{'type'} : Disconnected\n";
+				if ($client->{$conn}->{'type'}) {
+					print "$client->{$conn}->{'type'} : Disconnected\n";
+				}
 				delete $client->{$conn};
 			},
 
@@ -95,7 +97,6 @@ Net::WebSocket::Server->new(									# setup websocket server
 			},
 
 			utf8 => sub {								# client sent text/base64 data
-
 
 				my ($conn, $msg) = @_;
 
@@ -156,8 +157,6 @@ sub pkt_buffer {
 		$pkt = packet::parse($packet->{'plaintext'}, [ $config->{'key'} ]);	# parse the decrypted
 
 		if ($pkt->{'type'} < $packet::PKT_BROADCAST) {				# rate limit non-priviledged packets
-
-			print "RX: " . unpack("H*", $pkt) . "\n";
 
 			my $hash = sha256($packet->{'plaintext'});			# hash the packet
 	
