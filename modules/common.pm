@@ -160,3 +160,74 @@ sub memo_to_xfvk {
 		}
 	}
 }
+
+
+#######################################################################################################################################
+#
+# Maintain hash of monitored viewkeys, returns arrayref of viewkeys with active monitoring
+#
+sub xfvk_monitor {
+
+	my ($xfvk, $amount, $height_reg, $height) = @_;			# viewkey, fee per block, block height of registration, current block height
+
+	if ($config->{'fee'} > 0) {					# calculate expiry block if a fee was set
+		$blocks = int ($amount / $config->{'fee'});
+	}
+
+
+	if (!exists($monitored->{$xfvk})) { 				# viewkey not already registered
+
+		if ($config->{'fee'} > 0) {					# calculate expiry block if a fee was set
+			$monitored->{$xfvk} = { height => $height_reg, fee => $config->{'fee'}, expiry => ($blocks + $height_reg)};
+		}
+		else {								# no fee set, activate keys 
+			$monitored->{$xfvk} = { height => $height_reg, fee => $config->{'fee'}, expiry => -1};
+		}
+	}
+
+	else {								# viewkey already registered
+
+		if ($config->{'fee'} > 0) {					# fee exists
+
+			if ($monitored->{$xfvk}->{'expiry'} < $height ) {	# key is active, extend the expiry block
+				$monitored->{$xfvk}->{'expiry'} += $blocks;
+			}
+			else {							# key expired, set expiry block from current
+				$monitored->{$xfvk}->{'expiry'} = ($blocks + $height_reg);
+			}
+		}
+	}
+
+	return(xfvk_active($height));					# return array of active keys
+}
+
+#######################################################################################################################################
+#
+# Generate array of viewkeys to monitor, reads from global hash of keys
+#
+
+sub xfvk_active {
+
+	my ($height) = @_;
+
+	my @active = ();						
+
+	foreach my $key (keys %$monitored) {					# activate/deactivate keys
+
+		if ( $monitored->{$key}->{'expiry'} == -1) {			# activate, no expiry block set
+			$monitored->{$key}->{'active'} = 1;
+			push @active, $key;
+		}
+		elsif ( $monitored->{$key}->{'expiry'} > $height) {		# activate, expiry block not mined 
+			$monitored->{$key}->{'active'} = 1;
+			push @active, $key;
+		}
+		else {								# deactivate, default
+			$monitored->{$key}->{'active'} = 0;
+		}
+	}
+
+	return(\@active);							# return arrayref of keys to monitor
+}
+
+1;
