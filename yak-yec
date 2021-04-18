@@ -98,9 +98,13 @@ common::debug(0, "REG: $config->{'addr'}");
 common::debug(0, "IVK: $config->{'ivk'}");
 
 my $info  = node_cli('getblockchaininfo', '', 'abort');											# current chain info, abort if node is down
-my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
 
-# TODO: Delay here if the node is NOT fully synched
+common::debug(0, "Checking node sync...");
+while ( ($info->{'blocks'} != $info->{'headers'} ) && ($info->{'verificationprocess'} != 1) ) {						# delay until node is synced
+	sleep(30);
+	$info  = node_cli('getblockchaininfo', '', 'abort');										# reload chain info
+}
+my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
 
 my $ctx = ZMQ::FFI->new();														# ZMQ CONNECTION
 my $zmq_socket = $ctx->socket(ZMQ_SUB);													 

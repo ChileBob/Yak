@@ -95,6 +95,12 @@ common::debug($config->{'debug'}, "WEB: $config->{'web'}");
 common::debug($config->{'debug'}, "REG: $config->{'addr'}");
 																	# ZMQ CLIENT
 my $info  = node_cli('getblockchaininfo', '', 'abort');											# current chain info, abort if node is down
+
+common::debug(0, "Checking node sync...");							
+while ( ($info->{'blocks'} != $info->{'headers'}) && !$info->{'initial_block_download_complete'}) {					# delay until node is synced
+	sleep(30);
+	$info  = node_cli('getblockchaininfo', '', 'abort');				
+}
 my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
 
 # TODO: Delay here if the node is not fully synced
