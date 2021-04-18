@@ -151,12 +151,14 @@ sub pkt_buffer {
 	}
 
 	my $packet = packet::parse($raw, [ $config->{'key'} ], $transport );		# parse what we received
-	
+
 	if ($packet->{'type'} == $packet::PKT_ENCRYPTED_BCAST) {			# was a broadcast encrypted with our key
 
 		$pkt = packet::parse($packet->{'plaintext'}, [ $config->{'key'} ]);	# parse the decrypted
 
 		if ($pkt->{'type'} < $packet::PKT_BROADCAST) {				# rate limit non-priviledged packets
+
+			print "RX: " . unpack("H*", $pkt) . "\n";
 
 			my $hash = sha256($packet->{'plaintext'});			# hash the packet
 	

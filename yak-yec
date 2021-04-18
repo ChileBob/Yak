@@ -56,8 +56,7 @@ require "$install/modules/bech32.pm";													# bech32 encode/decode
 require "$install/modules/aes256.pm";													# AES256 encrypt/decrypt
 require "$install/modules/packet.pm";													# yak packet generation/parsing
 
-# my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT );				# array of packet types we deliver, others are ignored
-my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION );								
+my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT);				# packet types we deliver, remove from array to disable
 
 $config->{'client_ident'} = aes256::keyRandom(32,'A'),											# client ident, randomised on startup
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args

@@ -17,8 +17,8 @@ my $config = {																# DEFAULT CONFIGURATION
 
 	nodename => 'CoinGecko (https://coingecko.com/)',											# name/message for announcements
 	key => 'changethiskey',														# encryption key to submit broadcasts
-	timer_reset => 60,														# interval timer reset value (60 seconds)
-	timer_count => 0,														# interval timer count
+	timer_reset => 30,														# interval timer reset value (60 seconds)
+	timer_count => -1,														# interval timer count
 	client_auth => 'changethispassword',												# client password, bypasses yak-yak rate limit
 	debug => 5,															# debugging output level
 	web => 'ws://127.0.0.1:8834',													# websocket server
@@ -50,6 +50,8 @@ require "$install/modules/packet.pm";													# yak packet generation/parsin
 
 $config->{'client_ident'} = aes256::keyRandom(32,'A'),											# client ident, randomised on startup
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args
+
+our $key = $config->{'key'};														# transport key needs to be shared with other packages
 
 $SIG{INT} = \&shutdown;															# gracefull shutdown
 
@@ -86,7 +88,6 @@ while ($running >= 0) {
 		$client->on(														# connect method
 			connect => sub {
 				my $client = shift;
-				sleep(2);												# a little setup time here helps
     			}
 		);
 	
@@ -115,18 +116,21 @@ while ($running >= 0) {
 		);
 	
 		$client->connect;													# start websocket client
+		sleep(1);
 
 		$client->write("BASE64:$config->{'client_ident'}:$config->{'client_auth'}");						# subscribe for BASE64 transport, send ident & auth
 	
-		while ($running > 0) {	
+		while ($running) {	
+
+			sleep(1);
 
 			if ($tcp_socket) {												# confirm connection is up
 
 				DELIVER: if (scalar @packet > 0) {									# send oldest packet
 
 					$client->write($packet[0]);
+
 					@packet = splice(@packet, 1);
-	
 					usleep 100_00;											# short nap, be nice to the server
 	
 					my $recv_data;											# read from websocket
@@ -159,26 +163,24 @@ while ($running >= 0) {
 	
 					$config->{'timer_count'} = $config->{'timer_reset'};
 	
-					if ($running == 1) {											# check runtime flag before getting fresh prices
+					my $ua = LWP::UserAgent->new(timeout => 10);							# talk to ConGecko
+					my $response = $ua->get($config->{'api'});
 
-						my $ua = LWP::UserAgent->new(timeout => 10);							# talk to ConGecko
-						my $response = $ua->get($config->{'api'});
-	
-						if (eval { decode_json($response->{'_content'}) } ) {						# make sure we got a valid response
+					if (eval { decode_json($response->{'_content'}) } ) {						# make sure we got a valid response
 
-							my $json = decode_json($response->{'_content'});					# convert to a hash
-	
-							my @data = ( pack("A16", "CoinGeko") );							# assemble the data, first part is a 16-char string
-							foreach my $coin_id ('zcash', 'ycash') {
-								foreach my $currency_id ('usd', 'gbp', 'eur') {
-									push @data, uc(substr($coin_id,0,1) . 'EC' . $currency_id) . $json->{$coin_id}->{$currency_id};
-								}
+						my $json = decode_json($response->{'_content'});					# convert to a hash
+
+						my @data = ( pack("A16", "CoinGeko") );							# assemble the data, first part is a 16-char string
+						foreach my $coin_id ('zcash', 'ycash') {
+							foreach my $currency_id ('usd', 'gbp', 'eur') {
+								push @data, uc(substr($coin_id,0,1) . 'EC' . $currency_id) . $json->{$coin_id}->{$currency_id};
 							}
-							push @packet, packet::generate($packet::PKT_TICKER, \@data, $config->{'key'});		# generate packet
 						}
+						push @packet, packet::generate($packet::PKT_TICKER, \@data, $config->{'key'});		# generate packet
 					}
 				}
-				else {
+
+				if (scalar @packet == 0) {
 					sleep(1);
 				}
 			}
