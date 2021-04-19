@@ -43,6 +43,8 @@ my $client;											# connected clients
 my @client_key = ( $config->{'key'} );								# load our key
 push @client_key, common::keys_load('yak-yak.keys');						# append client keys
 
+my @blocked = common::keys_load('yak-yak.blocked');						# load blocked ip list
+
 $SIG{INT} = \&server_shutdown;									# graceful shutdown (not implemented)
 
 Net::WebSocket::Server->new(									# setup websocket server
@@ -103,16 +105,69 @@ Net::WebSocket::Server->new(									# setup websocket server
 
 				my ($conn, $msg) = @_;
 
-				if ( $msg =~ m/^BINARY/ || $msg =~ m/^BASE64/) {		# subscription
+				if ( $msg =~ m/^BINARY/ || $msg =~ m/^BASE64/) {			# subscription
 					
 					($client->{$conn}->{'transport'}, $client->{$conn}->{'type'}) = split(':', $msg);
 					$conn->send_utf8("HELLO");					# say hi
 					print "$client->{$conn}->{'type'} : $client->{$conn}->{'ip'} : Connected\n";
 				}
 
-				else {								# BASE64 data
+				elsif ( $msg =~ m/^ADMIN/ ) {						# admin command
 
-					pkt_buffer($conn, $msg, 'BASE64');			# broadcast
+					my $rx = aes256::decrypt($config->{'key'}, decode_base64(substr($msg, 5)));
+
+					print "ADMIN: $rx\n";
+
+					if ($rx) {
+						$rx =~ s/\s+/ /g;
+						my @command = split(" ", $rx);
+
+						$command[0] = lc($command[0]);				# commands are alway lowercase
+
+						print "Remote Command: $command[0] $command[1]\n";
+
+						if ($command[0] eq 'addkey') {				# add client encryption key
+							push @client_key, $command[1];
+							common::keys_save(\@client_key, 'yak-yak.keys');	
+						}
+						elsif ($command[0] eq 'delkey') {			# remove client encryption key
+							my @filtered;
+							foreach my $key (@client_key) {
+								if ($key ne $command[1]) {
+									push @filtered, $key;
+								}
+							}
+							@client_key = @filtered;
+						}
+						elsif ($command[0] eq 'ban') {				# add ip address to blocked list
+							push @blocked, $command[1];
+							common::keys_save(\@blocked, 'yak-yak.blocked');
+						}
+						elsif ($command[0] eq 'unban') {			# remove ip address from blocked list
+							my @filtered;
+							foreach my $key (@blocked) {
+								if ($key ne $command[1]) {
+									push @filtered, $key;
+								}
+							}
+							@blocked = @filtered;
+						}
+						elsif ($command[0] eq 'shutdown') {			# shutdown, right now
+							server_shutdown();
+						}
+						elsif ($command[0] eq 'limit') {			# adjust rate limiter
+							$config->{'limit'} = $command[1];
+						}
+						elsif ($command[0] eq 'tracker') {			# adjust tracker buffer size
+							$config->{'tracher'} = $command[1];
+						}
+					}
+					$conn->disconnect();						# disconnect client
+				}
+
+				else {									# BASE64 data
+
+					pkt_buffer($conn, $msg, 'BASE64');				# broadcast
 
 				}
 			},
@@ -133,7 +188,8 @@ sub server_shutdown {
 
 	print "\nShutting down...\n";
 
-	common::keys_save(\@client_key, 'yak-yak.keys');				# store client keys
+	common::keys_save(\@client_key, 'yak-yak.keys');				# client keys
+	common::keys_save(\@blocked, 'yak-yak.blocked');				# banned ip list 
 
 	print("Bye!\n");
 	exit(0);

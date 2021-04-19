@@ -1,0 +1,97 @@
+#!/usr/bin/perl
+#
+# yak-admin : yak-yak remote command client
+#
+# MIT License (ChileBob)
+#
+# Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
+# Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
+
+use Data::Dumper;										# debugging output
+use Convert::Base64;
+
+my $config = { 											# DEFAULT CONFIGURATION
+	web 	    => 'ws://127.0.0.1:8834',							# websocket server 
+	client_type => 'yak-admin',
+	debug       => 5									# debug verbosity
+};
+
+use Time::HiRes q(usleep);									# high res timer
+use IO::Socket::INET;										# general purpose networking
+use Protocol::WebSocket::Client;								# websocket client
+
+use Cwd qw(abs_path);										# get install/working directory
+use File::Basename;
+our $install = dirname(abs_path($0));			
+
+require "$install/modules/common.pm";								# common yak subs
+require "$install/modules/bech32.pm";								# bech32 encode/decode 
+require "$install/modules/aes256.pm";								# AES256 encrypt/decrypt
+require "$install/modules/packet.pm";								# yak packet encode/decode
+
+$config = common::parse_argv($config, \@ARGV); 							# process command line, overrides default config
+
+my @key = common::keys_load('yak-admin.keys');							# load our keys
+
+#########################################################################################################################################################################
+#
+# CHANGING ANYTHING BELOW THIS LINE IS A REALLY BAD IDEA !! IF YOU BREAK IT, YOU GET TO KEEP THE PEICES
+#
+#########################################################################################################################################################################
+
+my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});			# break websocket uri into components
+
+my $tcp_socket = IO::Socket::INET->new(								# connect to websocket server (blocking)
+	PeerAddr => $web_ip,									#
+	PeerPort => $web_port,									#
+	Proto => 'tcp',										#
+	Blocking => 1										# can be blocking, all we do is send
+);
+
+if (!$tcp_socket) {										# confirm connection
+	common::debug (0, "WEB: $config->{'web'} : Failed to connect");
+	exit(1);
+}
+
+my $client = Protocol::WebSocket::Client->new(url => "$config->{'web'}");			# new websocket client
+
+$client->on(											# websocket connect 
+	connect => sub {
+		my $client = shift;
+	}
+);
+
+$client->on(
+	write => sub {										# websocket write
+		my $client = shift;
+		my ($buf) = @_;
+		syswrite $tcp_socket, $buf;
+	}
+);
+
+$client->on(											# websocket read
+	read => sub {
+
+		my $client = shift;
+		my ($buf) = @_;
+
+		if ($buf =~ m/^HELLO/) {							# server always says 'Hi'
+			common::debug(0, "Connected!");
+		}
+		else {
+			print "$buf\n";
+		}
+	}
+);
+
+$client->connect;										# connect to websocket server
+sleep(1);											# yak-yak needs a little time
+
+$client->write("BASE64:$config->{'client_type'}");						# subscribe for BASE64 transport & send type
+sleep(1);
+
+$client->write('ADMIN' . encode_base64(aes256::encrypt($key[0], "$ARGV[0] $ARGV[1]")));		# encrypt command, send it & exit
+sleep(1);
+
+exit;
+
