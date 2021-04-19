@@ -40,6 +40,9 @@ require "$install/modules/packet.pm";
 my @pkt_hash;											# sha256 hashes of packets (prevents duplicates)
 my $client;											# connected clients
 
+my @client_key;											# encryption keys for broadcast clients
+push @client_key, $config->{'key'};								# TODO: for testing, delete this when done
+
 $SIG{INT} = \&server_shutdown;									# graceful shutdown (not implemented)
 
 Net::WebSocket::Server->new(									# setup websocket server
@@ -150,14 +153,16 @@ sub pkt_buffer {
 		$conn->send_binary(pack("A*", "OK"));					# ack
 	}
 
-	my $packet = packet::parse($raw, [ $config->{'key'} ], $transport );		# parse what we received
+	my $packet = packet::parse($raw, \@client_key, $transport );			# parse what we received
 
-	if ($packet->{'type'} == $packet::PKT_ENCRYPTED_BCAST) {			# was a broadcast encrypted with our key
+	if ($packet->{'type'} == $packet::PKT_ENCRYPTED_BCAST) {			# was an encrypted broadcast we could read
 
-		$pkt = packet::parse($packet->{'plaintext'}, [ $config->{'key'} ]);	# parse the decrypted
+		$pkt = packet::parse($packet->{'plaintext'});				# parse the plaintext
 
 		if ($pkt->{'type'} < $packet::PKT_BROADCAST) {				# rate limit non-priviledged packets
 
+			# TODO: Rate limit traffic from this client
+			
 			my $hash = sha256($packet->{'plaintext'});			# hash the packet
 	
 			if (!grep $_ eq $hash, @pkt_hash) {				# check for duplicates
@@ -166,11 +171,10 @@ sub pkt_buffer {
 				if (scalar @pkt_hash > $config->{'tracker'}) {		# control tracker size
 					shift @pkt_hash;
 				}
-		
 				broadcast ($conn, $packet->{'plaintext'});	
 			}
 		}
-		else {									# send broadcast packet
+		else {									# notification, no rate or duplicate limits
 			broadcast ($conn, $packet->{'plaintext'});
 		}
 	}	

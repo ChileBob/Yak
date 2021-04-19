@@ -100,9 +100,9 @@ common::debug(0, "IVK: $config->{'ivk'}");
 my $info  = node_cli('getblockchaininfo', '', 'abort');											# current chain info, abort if node is down
 
 common::debug(0, "Checking node sync...");
-while ( ($info->{'blocks'} != $info->{'headers'} ) && ($info->{'verificationprocess'} != 1) ) {						# delay until node is synced
+while ( ($info->{'blocks'} != $info->{'headers'} ) && ($info->{'verificationprocess'} < 1) ) {						# delay until node is synced
 	sleep(30);
-	$info  = node_cli('getblockchaininfo', '', 'abort');										# reload chain info
+	$info  = node_cli('getblockchaininfo', '', '');											# reload chain info
 }
 my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
 
@@ -260,7 +260,12 @@ while ($running >= 0) {
 
 								foreach my $vout (@{$txn->{'vShieldedOutput'}}) {				# loop through shielded outputs
 
-									VIEWKEY: foreach my $xfvk ($config->{'xfvk'}, @viewkey) {			# loop through all viewkeys
+									my @keylist = ( $config->{'xfvk'} );					# array of all keys including registration key
+									push @keylist, @viewkey;
+
+									VIEWKEY: foreach my $xfvk (@keylist) {					# loop through all viewkeys
+
+										print "yak-yec : trying key $xfvk\n\n";
 
 										my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
 	

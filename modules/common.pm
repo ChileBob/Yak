@@ -227,7 +227,7 @@ sub xfvk_active {
 		}
 	}
 
-	return(\@active);							# return arrayref of keys to monitor
+	return(@active);							# return arrayref of keys to monitor
 }
 
 1;

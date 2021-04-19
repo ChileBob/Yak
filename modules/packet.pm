@@ -20,18 +20,21 @@ my $maxbytes = 4096;											# maximum packet size (websock server hard limit 
 
 our $shielded_bytes = 576;										# ciphertext length for shielded notifications (with authentication), used to generate fakes
 
-our $PKT_ZEC_TRANSPARENT  = 0x01;									# packet types, used outside this package
-our $PKT_ZEC_SHIELDED     = 0x02;
-our $PKT_CONFIRMATION     = 0x03;
-our $PKT_YEC_TRANSPARENT  = 0x04;								
-our $PKT_YEC_SHIELDED     = 0x05;
-our $PKT_ENCRYPTED        = 0x06;									# encrypted data (that we cant read)
-
 our $PKT_VERSION          = 0x01;									# packet version number
 
-our $PKT_BROADCAST        = 0xf0;									# broadcast packets, not rate limited
+# NOTE : These packets are sent as plaintext to yak-yak but are subject the the rate limiter
+our $PKT_ENCRYPTED        = 0x01;									# encrypted data (that we cant read)
+
+# NOTE : These packets MUST be received as PKT_ENCRYPTED_BCAST and encrypted with a valid yak-yak key
+#
+our $PKT_BROADCAST        = 0xf0;									# broadcast packets
 our $PKT_HEARTBEAT        = 0xf1;									# heartbeat, timed event from websocket server
 our $PKT_TICKER           = 0xf2;									# price ticker update
+our $PKT_ZEC_TRANSPARENT  = 0xf3;									# packet types, used outside this package
+our $PKT_ZEC_SHIELDED     = 0xf4;
+our $PKT_CONFIRMATION     = 0xf5;
+our $PKT_YEC_TRANSPARENT  = 0xf6;								
+our $PKT_YEC_SHIELDED     = 0xf7;
 our $PKT_ENCRYPTED_BCAST  = 0xff;									# encrypted data for broadcast
 
 # TRANSPARENT NOTIFICATION (PKT_ZEC_TRANSPARENT, PKT_YEC_TRANSPARENT)
@@ -119,12 +122,16 @@ sub parse {
 
 		$data->{'ciphertext'} = substr($packet, 2);						# strip the header
 
-		$data->{'plaintext'} = aes256::decrypt($viewkeys[0], $data->{'ciphertext'});		# decrypt yak-yak key
+		foreach my $key (@viewkeys) {
 
-		if (!$data->{'plaintext'}) {								# change type if we fail to decrypt
-			$data->{'type'} = $PKT_ENCRYPTED;
+			$data->{'plaintext'} = aes256::decrypt($key, $data->{'ciphertext'});			# attempt to decrypt
+
+			if ($data->{'plaintext'}) {								# success !! return plaintext
+				return($data);
+			}
 		}
 
+		$data->{'type'} = $PKT_ENCRYPTED;							# none of our keys worked
 		return($data);
 	}
 
