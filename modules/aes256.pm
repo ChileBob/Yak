@@ -7,9 +7,6 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-# TODO: Ciphertext is NOT authenticated, it should be !
-# - authentication key should be sha(zaddr) derived from xfvk, only the node & client know
-
 package aes256;
 
 use Crypt::CBC;									# encryption mode
@@ -50,12 +47,12 @@ sub decrypt {
 			$iv  = substr($ciphertext, 0, 16);				# init vector, first 16 bytes
 		
 			my $cipher = Crypt::CBC->new({ 					# setup encyption
-			'key' => $key,
-			'cipher' => 'OpenSSL::AES',
-			'header' => 'none',
-			'iv' => $iv,
-			'literal_key' => 1,					
-			'padding' => 'standard'
+				'key' => $key,
+				'cipher' => 'OpenSSL::AES',
+				'header' => 'none',
+				'iv' => $iv,
+				'literal_key' => 1,					
+				'padding' => 'standard'
 			});
 	
 			my $plaintext = $cipher->decrypt(substr($ciphertext, 16));	# decrypt
