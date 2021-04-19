@@ -230,4 +230,45 @@ sub xfvk_active {
 	return(@active);							# return arrayref of keys to monitor
 }
 
+
+#######################################################################################################################################
+#
+# Load encryption keys from file
+#
+
+sub keys_load {
+
+	my ($filename) = @_;
+
+	my @keys;
+
+	open my $handle, '<', "$main::install/keys/$filename";			# load encryption keys
+	while (my $line = <$handle>) {
+		chop($line);
+		push @keys, $line;
+	}
+	close ($handle);
+
+	return(@keys);
+}
+
+
+#######################################################################################################################################
+#
+# Store encryption keys
+#
+
+sub keys_save {
+
+	my ($keys, $filename) = @_;
+
+	open my $handle, '>', "$main::install/keys/$filename";			# load encryption keys
+	foreach my $key (@{$keys}) {
+		print $handle "$key\n";
+	}
+	close ($handle);
+}
+
+
 1;
+

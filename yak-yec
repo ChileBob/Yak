@@ -16,8 +16,8 @@
 my $config = {																# DEFAULT CONFIGURATION
 
 	nodename    => 'ChileBob (YCASH)',												# name/message for announcements
-	client_type => 'yak-yec',													# client type, yak-yak needs to know
-	client_key  => 'changethiskey',													# yak-yak encryption, required to submit notifications
+	client_type => 'yak-yec',													# client type
+	client_key  => 'changethiskey',													# client encryption key, to send notifications
 	zmq => 'tcp://127.0.0.1:28832',													# fullnode zmq
 	web => 'ws://127.0.0.1:8834',													# websocket server
 	timer => 60,															# interval timer
@@ -26,8 +26,6 @@ my $config = {																# DEFAULT CONFIGURATION
 	node_client => 'ycash-cli',													# fullnode client binary
 	librust => './rust/ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
 
-																	# Viewing key for registration address (get this from YEClite)
-	xfvk => 'zxviews1qdj98nu2qqqqpqxq8g9kn7z45jx3r5ejshvdffw2h2upu7054vhdjg8sjxg6r36mdaa22savtkrtq6nnrd2u3py4q4hns3cpfz0lwuafetv03gxlm0l6cutchpmzgn92zss0wy9g8kr2zrtyeyrtsqwqrf26j58dn9wj7teyad92mk5ymajjzhdhzw2qft8zwyqs7u78wa7zkewl885l8z5rvcvrt4n6w0j06zrpt5tc8zaeusrqdrh8hqvlfpa759yslhy8jsvwf2qmvfv0j'
 };
 
 #########################################################################################################################################################################
@@ -80,9 +78,10 @@ $ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque
 $ffi->attach( 'librustzcash_crh_ivk'            => [ 'string', 'string', 'opaque' ] => 'void');						# derive ivk from ak & nk
 $ffi->attach( 'librustzcash_xfvk_to_ivk'        => [ 'string', 'opaque' ] => 'int');							# derive ivk from xfvk
 
-$config->{'xfvk'} = common::xfvk_check($config->{'xfvk'});										# check registration viewkey is valid
+my @keys = common::keys_load('yak-yec.keys');												# load viewkeys
 
-if ($config->{'xfvk'}) {    														# registration viewkey
+$config->{'xfvk'} = common::xfvk_check($keys[0]);											# first key is for registration, make sure its valid !
+if ($config->{'xfvk'}) {    														# 
 	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});										# derive address
 	$config->{'ivk'}  = xfvk_to_ivk($config->{'xfvk'});										# derive ivk
 }
@@ -90,7 +89,7 @@ else {																	# MUST have a valid registration viewkey
 	print("Registration viewkey is NOT VALID ! Aborting\n");
 	exit(1);
 }
-$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;											# registration viewkey never expires
+$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;											# add to monitoring, no expiry block
 
 common::debug(o, "ZMQ: $config->{'zmq'}");												# show config
 common::debug(0, "WEB: $config->{'web'}");

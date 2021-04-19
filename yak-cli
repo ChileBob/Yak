@@ -37,17 +37,7 @@ require "$install/modules/packet.pm";								# yak packet encode/decode
 
 $config = common::parse_argv($config, \@ARGV); 							# process command line, overrides default config
 
-my @viewkeys;											# monitored viewkeys
-
-open my $handle, '<', $config->{'keys'};							# load viewkeys
-while (my $line = <$handle>) {
-	if ($key = common::xfvk_check($line)) {
-		push @viewkeys, $key;
-	}
-}
-close ($handle);
-
-common::debug (0, "KEY: Loaded " . scalar @viewkeys . " viewkeys from yak-cli.keys");
+my @viewkeys = common::keys_load('yak-cli.keys');						# load our viewkeys
 
 #########################################################################################################################################################################
 #

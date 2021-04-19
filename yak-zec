@@ -25,9 +25,6 @@ my $config = {																# DEFAULT CONFIGURATION
 	debug => 5,															# debugging output level
 	node_client => 'zcash-cli',													# fullnode client binary
 	librust => './rust/zcash/target/debug/librustzcash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
-
-																	# Viewing key for registration address (get this from ZECwallet)
-	xfvk => 'zxviews1q0kl7tavzyqqpq8efe0vpgzwc37zj0zr9j2quurncpsy74tdvh9c3racve9yfv6gkssvekw4sz6ueenvup6whupguzkg5rgp0kma37r4uxz9472w4zwra4jv6fm5dc2cevfpjsxdgndagslmgdwudhv4stklzfeszrlcnsqxyr2qt8tsf4yxs3he4rzllcly7xagfmnlycvvnvhhr9l9j6ad693rkueqys9f7mkc7aacxwp3tfc9hpvlckxnj4nwu6jef2x98jefhcgmpkrmn'
 };
 
 #########################################################################################################################################################################
@@ -79,7 +76,8 @@ $ffi->attach( 'librustzcash_xfvk_decrypt_note'  => [ 'int', 'string', 'string', 
 $ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque', 'opaque'  ] => 'int');				# derive address from xfvk
 $ffi->attach( 'librustzcash_crh_ivk'		=> [ 'string', 'string', 'opaque' ] => 'void');						# derive ivk from ak & nk
 
-$config->{'xfvk'} = common::xfvk_check($config->{'xfvk'});										# check registration viewkey is valid
+my @keys = common::keys_load('yak-zec.keys');												# load our viewkeys, first key is for registration
+$config->{'xfvk'} = common::xfvk_check($keys[0]);											# check registration viewkey is valid
 
 if ($config->{'xfvk'}) {	
 	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});										# derive address from xfvk

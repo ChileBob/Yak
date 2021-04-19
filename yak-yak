@@ -7,8 +7,8 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
-my $config = {											# default configuration
-	key   => 'changethiskey',								# encryption key, nodes must encrypt with this key before sending here
+my $config = {										
+	key   => 'changethiskey',								# yak-yak admin key, commands must be encrypted with this
 	limit => 100,										# max number of posts per tick interval 
 	port  =>  8834,										# listening port number
 	tick  =>  10,										# tick interval (seconds)
@@ -40,8 +40,8 @@ require "$install/modules/packet.pm";
 my @pkt_hash;											# sha256 hashes of packets (prevents duplicates)
 my $client;											# connected clients
 
-my @client_key;											# encryption keys for broadcast clients
-push @client_key, $config->{'key'};								# TODO: for testing, delete this when done
+my @client_key = ( $config->{'key'} );								# load our key
+push @client_key, common::keys_load('yak-yak.keys');						# append client keys
 
 $SIG{INT} = \&server_shutdown;									# graceful shutdown (not implemented)
 
@@ -130,6 +130,10 @@ exit(0);
 # shutdown server
 #
 sub server_shutdown {
+
+	print "\nShutting down...\n";
+
+	common::keys_save(\@client_key, 'yak-yak.keys');				# store client keys
 
 	print("Bye!\n");
 	exit(0);
