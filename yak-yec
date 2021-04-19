@@ -260,15 +260,10 @@ while ($running >= 0) {
 
 								foreach my $vout (@{$txn->{'vShieldedOutput'}}) {				# loop through shielded outputs
 
-									my @keylist = ( $config->{'xfvk'} );					# array of all keys including registration key
-									push @keylist, @viewkey;
-
-									VIEWKEY: foreach my $xfvk (@keylist) {					# loop through all viewkeys
-
-										print "yak-yec : trying key $xfvk\n\n";
+									VIEWKEY: foreach my $xfvk ($config->{'xfvk'}, @viewkey) {			# loop through all viewkeys
 
 										my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
-	
+
 										if ($result->{'status'} == 1) {						# decrypted !!! Wooooo!!!! 
 		
 											my $value = hex(unpack("H*", $result->{'value'}));		# convert value to yoshis
