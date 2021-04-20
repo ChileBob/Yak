@@ -98,7 +98,7 @@ sub encrypt {
 
 #######################################################################################################################################
 #
-# generate random string to use as a key (64 hex chars only, 32 bytes, 256-bits) 
+# generate random string (default: 64 hex chars, 32-bytes)
 #
 sub keyRandom {	
 

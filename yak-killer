@@ -1,6 +1,0 @@
-#!/bin/bash
-
-# sometimes, you have to kill all your Yaks
-
-kill -9 `ps -aux | grep yak- | grep -v grep | cut -c13-18`
-
