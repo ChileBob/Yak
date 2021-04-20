@@ -18,7 +18,6 @@ my $config = {																# DEFAULT CONFIGURATION
 	nodename    => 'ChileBob (YCASH)',												# name/message for announcements
 	client_type => 'yak-yec',													# client type
 	client_key  => 'changethiskey',													# client encryption key, to send notifications
-	zmq => 'tcp://127.0.0.1:28832',													# fullnode zmq
 	web => 'ws://127.0.0.1:8834',													# websocket server
 	timer => 60,															# interval timer
 	fee => 1000,															# viewkey monitoring fee (Yatoshis per block)
@@ -58,6 +57,17 @@ my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $pac
 
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args
 
+my $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
+
+if ( !exists($node_config->{'zmqpubrawtx'}) || !exists($node_config->{'zmqpubhashblock'}) ) {
+	common::debug(0, "You must specify 'zmqpubhashblock' and 'zmqpubrawtx' in ycash.conf");
+	exit;
+}
+if ( $node_config->{'zmqpubrawtx'} ne $node_config->{'zmqpubhashblock'} ) {
+	common::debug(0, "'zmqpubhashblock' and 'zmqpubrawtx' MUST use the same port.");
+	exit;
+}
+
 our $key = $config->{'client_key'};													# yak-yak encryption key, shared with modules
 
 $SIG{INT} = \&shutdown;															# gracefull shutdown
@@ -91,7 +101,7 @@ else {																	# MUST have a valid registration viewkey
 }
 $monitored->{$config->{'xfvk'}}->{'expiry'} = -1;											# add to monitoring, no expiry block
 
-common::debug(o, "ZMQ: $config->{'zmq'}");												# show config
+common::debug(o, "ZMQ: $node_config->{'zmqpubrawtx'}");											# show config
 common::debug(0, "WEB: $config->{'web'}");
 common::debug(0, "REG: $config->{'addr'}");
 common::debug(0, "IVK: $config->{'ivk'}");
@@ -107,7 +117,7 @@ my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# l
 
 my $ctx = ZMQ::FFI->new();														# ZMQ CONNECTION
 my $zmq_socket = $ctx->socket(ZMQ_SUB);													 
-$zmq_socket->connect($config->{'zmq'});													 
+$zmq_socket->connect($node_config->{'zmqpubrawtx'});													 
 $zmq_socket->subscribe('');							 
 
 my $txn_reg = node_cli("z_listreceivedbyaddress $config->{'addr'}");									# CLIENT VIEWKEY REGISTRATION
@@ -312,6 +322,12 @@ while ($running >= 0) {
 						}
 	
 						@viewkey = common::xfvk_active($block->{'height'});					# check viewkeys for expiry
+
+						if ($node_config->{'mineraddress'}) {							# MINING POOL
+							my $template = node_cli('getblocktemplate', '', '');				# get block template
+							# TODO: Send block template to yak-yak
+							# TODO: Hopefully, someone will mine it !
+						}
 					}
 				}
 	

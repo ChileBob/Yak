@@ -270,5 +270,28 @@ sub keys_save {
 }
 
 
+#######################################################################################################################################
+#
+# Load node config file, format MUST be 'name=value'
+#
+
+sub config_load {
+
+	my ($filename) = @_;
+
+	my $conf;
+
+	open my $fh, $filename;				
+
+	while (my $line = <$fh> ) {
+		chop($line);
+		my ($var, $val) = split("=", $line);
+		$conf->{$var} = $val;
+	}
+	close ($fh);
+
+	return($conf);
+}
+
 1;
 
