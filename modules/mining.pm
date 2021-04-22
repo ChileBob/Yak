@@ -14,25 +14,25 @@ use Bitcoin::Crypto::Base58 qw(:all);
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
 
-exit;
-
 #########################################################################################################################################################################
 #
-# convert nBits into 256-bit hex-encoded
+# convert nBits into target, all as hex-encoded strings
 #
-sub nbits {
+sub nbits_to_target {
 
 	my ($nbits) = @_;								# hex-encoded nBits
 
-	my $diff = substr($nbits,2,6);							# most significant bits
+	my $target = substr($nbits,2,6);						# most significant bits
 
 	my $exp = hex(substr($nbits,0,2)) - 3;						# exponent
-	while ($exp > 0) {
-		$diff .= '00';
+	while ($exp > 0) {								 
+		$target .= '00';
 		$exp--;
 	}
-	
-	return($diff);									# return difficulty
+	while (length($target) < 64) {							# leading zeros
+		$target = '00' . $target;
+	}
+	return($target);								# return target
 }
 
 #########################################################################################################################################################################
