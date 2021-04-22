@@ -17,7 +17,7 @@ my $debug = 5;						# global debug verbosity, 0 = quiet
 
 #########################################################################################################################################################################
 #
-# generate a transparent transaction output given the address & amoount in zats
+# generate hex-encoded transparent output given the payment address & amount (zats)
 #
 sub txn_out {
 
@@ -38,14 +38,38 @@ sub txn_out {
 
 #########################################################################################################################################################################
 #
-# return compactSize for an integer or hex-encoded encoded data
+# get block reward from hex-encoded coinbase transaction
 #
-sub compact_size {					
+sub block_reward {
+
+	my ($hexData) = @_;
+
+	my $blockReward = 0;								# block reward
+
+	my $hexOutputs = substr($hexData, 112, -36);					# transaction outputs
+
+	while (length($hexOutputs) > 0) {						# loop through all outputs
+
+		$blockReward += hex(reverse_bytes(substr($hexOutputs, 0, 16)));		# add value to block reward total
+		$hexOutputs = substr($hexOutputs, (18 + (2 * readCompactSize(substr($hexOutputs, 16, 10)))));	
+	}
+
+	return($blockReward);								# block reward in zats
+}
+
+
+#########################################################################################################################################################################
+#
+# return compactSize as hex-encoded little-endian string for an integer or hex-encoded encoded data
+#
+sub hexCompactSize {					
 
 	my $length;
 	my $compact = '';
 
-	if ($_[1] eq 's') {
+	my ($hexData, $type) = @_;
+
+	if ($type eq 's') {
 		$length = length($_[0]) / 2;									# hex string, convert to length in bytes
 	}
 	else {													# integer 
@@ -56,17 +80,17 @@ sub compact_size {
 		$compact = sprintf("%02x", $length);
 	        return($compact);
 	}
-	elsif ( ($length >= 253) && ($length <= 65535) ) {							# 16-bit, little-endian
+	elsif ( ($length >= 253) && ($length <= 65535) ) {							# 16-bit
 		$compact = sprintf("%04x", $length);
 		$compact = reverse_bytes($compact);
 		return("fd$compact");
 	}
-	elsif ( ($length > 65556) && ($length <= 4294967295)) {							# 32-bit, little-endian
+	elsif ( ($length > 65556) && ($length <= 4294967295)) {							# 32-bit
 		$compact = sprintf("%08x", $length);
 		$compact = reverse_bytes($compact);
 		return("fe$compact");
 	}
-	else {													# 64-bit, little-endian
+	else {													# 64-bit
 		$compact = sprintf("%016x", $length);
 		$compact = reverse_bytes($compact);
 		return("ff$compact");
@@ -75,7 +99,29 @@ sub compact_size {
 
 #########################################################################################################################################################################
 #
-# generate merkleroot from array-ref of transactions ids
+# read compactSize hex-encoded bytes, return integer
+#
+sub readCompactSize {
+
+	my ($hexData) = @_;
+
+	if ( substr($hexData,0,2) eq 'fd') {	
+		return(hex(reverse_bytes(substr($hexData,2,4))));
+	}
+	elsif ( substr($hexData,0,2) eq 'fe') {
+		return(hex(reverse_bytes(substr($hexData,2,8))));
+	}
+	elsif ( substr($hexData,0,2) eq 'ff') {
+		return(hex(reverse_bytes(substr($hexData,2,16))));
+	}
+	else {							# works !
+		return(hex(substr($hexData,0,2)));
+	}
+}
+
+#########################################################################################################################################################################
+#
+# generate merkleroot from transaction txids
 #
 sub merkleroot {				
 
@@ -98,7 +144,7 @@ sub merkleroot {
 		my @joinedHashes;
 
 		while (my @pair = splice @hashes, 0, 2) {							# get a pair of hashes
-			push @joinedHashes, hash_this(reverse_bytes("$pair[1]$pair[0]"), 'le');			# get the hash
+			push @joinedHashes, hash_this(reverse_bytes("$pair[1]$pair[0]"));			# get the hash
 		}
 		@hashes = @joinedHashes;									# replace hashes with joinedHashes
 	}
@@ -112,13 +158,20 @@ sub merkleroot {
 #
 sub hash_this {						
 
-	if ($_[1] eq 'le') {
-		return(reverse_bytes(unpack("H*", sha256(sha256(pack "H*", $_[0])))));		
-	}
-	elsif ($_[1] eq 'be') {
-		return(unpack("H*", sha256(sha256(pack "H*", $_[0]))));			
-	}
+	my ($hexData) = @_;											# hex-encoded transaction data
+
+	return(unpack("H*", reverse sha256(sha256(pack "H*", $hexData))));					# returns hash, hex-encoded, little-endian
 }
 
-1;
+
+#########################################################################################################################################################################
+#
+# reverse byte order of hex-encoded string
+#
+sub reverse_bytes {												# reverse byte order of hex-encoded string
+
+	my ($hexString) = @_;
+
+	return( unpack("H*", reverse pack("H*", $hexString))) ;
+}
 
