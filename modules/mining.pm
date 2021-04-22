@@ -14,6 +14,26 @@ use Bitcoin::Crypto::Base58 qw(:all);
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
 
+exit;
+
+#########################################################################################################################################################################
+#
+# convert nBits into 256-bit hex-encoded
+#
+sub nbits {
+
+	my ($nbits) = @_;								# hex-encoded nBits
+
+	my $diff = substr($nbits,2,6);							# most significant bits
+
+	my $exp = hex(substr($nbits,0,2)) - 3;						# exponent
+	while ($exp > 0) {
+		$diff .= '00';
+		$exp--;
+	}
+	
+	return($diff);									# return difficulty
+}
 
 #########################################################################################################################################################################
 #
@@ -40,9 +60,9 @@ sub txn_out {
 #
 # get block reward from hex-encoded coinbase transaction
 #
-sub block_reward {
+sub blockReward {
 
-	my ($hexData) = @_;
+	my ($hexData) = @_;								# coinbase transaction as hex-encoded string
 
 	my $blockReward = 0;								# block reward
 
@@ -168,7 +188,7 @@ sub hash_this {
 #
 # reverse byte order of hex-encoded string
 #
-sub reverse_bytes {												# reverse byte order of hex-encoded string
+sub reverse_bytes {												# reverse byte order of a hex-encoded string
 
 	my ($hexString) = @_;
 
