@@ -7,8 +7,12 @@
 # Zcash : zs1a7qnkg8hr74ujj08jhjcdfs7s62yathqlyn5vd2e8ww96ln28m3t2jkxun5fp7hxjntcg8ccuvs
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
+# TODO: Provide stratum pool for block mining, connecting miners equally among nodes.
+
 my $config = {										
 	key   => 'changethiskey',								# yak-yak admin key, commands must be encrypted with this
+	poolport => 3333,									# port for stratum server (block mining)
+	pooladdr => 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP',					# pool mining address
 	limit => 100,										# max number of posts per tick interval 
 	port  =>  8834,										# listening port number
 	tick  =>  10,										# tick interval (seconds)
@@ -36,14 +40,14 @@ our $install = dirname(abs_path($0));								# get install dir at runtime
 require "$install/modules/common.pm";								# yak perl modules
 require "$install/modules/aes256.pm";		
 require "$install/modules/packet.pm";
+require "$install/modules/mining.pm";
 
 my @pkt_hash;											# sha256 hashes of packets (prevents duplicates)
 my $client;											# connected clients
 
 my @client_key = ( $config->{'key'} );								# load our key
 push @client_key, common::keys_load('yak-yak.keys');						# append client keys
-
-my @blocked = common::keys_load('yak-yak.blocked');						# load blocked ip list
+my   @blocked = common::keys_load('yak-yak.blocked');						# load blocked ip list
 
 $SIG{INT} = \&server_shutdown;									# graceful shutdown (not implemented)
 

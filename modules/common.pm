@@ -144,6 +144,29 @@ sub xfvk_check {
 
 #######################################################################################################################################
 #
+# get address type
+#
+sub addr_type {
+
+	my ($address) = @_;
+
+	if ( ($address =~ m/^s[1,3]/) && length($address) == 35) {
+		return('saddr');
+	}
+	elsif ( ($address =~ m/^t[1,3]/) && length($address) == 35) {
+		return('taddr');
+	}
+	elsif ( ($address =~ m/^ys1/) && length($address) == 78) {
+		return('yaddr');
+	}
+	elsif ( ($address =~ m/^zs1/) && length($address) == 78) {
+		return('zaddr');
+	}
+}
+
+
+#######################################################################################################################################
+#
 # Search memo text for Extended Full Viewing Key
 #
 sub memo_to_xfvk {
@@ -292,6 +315,7 @@ sub config_load {
 
 	return($conf);
 }
+
 
 1;
 

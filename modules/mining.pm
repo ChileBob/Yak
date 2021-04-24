@@ -11,8 +11,93 @@ package mining;
 
 use Data::Dumper;
 use Bitcoin::Crypto::Base58 qw(:all);
+use Digest::SHA qw(sha256);
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
+
+							# mining client states
+							
+our $CLIENT_NEW         = 0x00;				# - new connection
+our $CLIENT_SUBSCRIBED  = 0x01;				# - subscribed
+our $CLIENT_AUTHORIZED  = 0x02;				# - authenticated
+our $CLIENT_IDLE        = 0x10;				# - idle
+our $CLIENT_TARGETED    = 0x11;				# - targetted
+our $CLIENT_ACTIVE      = 0x12;				# - active (mining)
+our $CLIENT_DISCONNECT  = 0xff;				# - disconnected
+	
+
+# Equihash parameters
+#
+# my $N = 192;	# width (bits), integer divisible by (K+1)
+# my $K = 7;	# length of problem
+# 
+# my $strings = 2**($N/($K+1));	# number of strings (16777216)
+# print "strings $strings\n\n";
+# 
+# my $indexes = 2**$K;		# number of indexes (128)
+# print "indexes $indexes\n\n";
+# 
+#solution size = 400 bytes, 3200 bits
+#
+# difficulty check : sha256(sha256(data nonce solution)
+#
+
+#########################################################################################################################################################################
+#
+# check solution matches difficulty target								# NOTE: Solution MUST start with compactSize
+#
+sub check_solution {
+
+	my ($nbits, $header, $nonce, $solution) = @_;							# hex-encoded strings
+	
+	my $target = nbits_to_target($nbits);								# convert nbits to 256-bit target
+	$target =~ s/0*$//;										# strip training zeros
+
+	my $diff = unpack("H*", reverse sha256(sha256(pack("H*", $header . $nonce . $solution)))); 	# get hex-encoded double-sha256 of the block header
+	$diff = substr($diff, 0, length($target));							# cut to length of significant target bytes
+
+	if (hex($diff) <= hex($target) ) {								# check difficulty less or equal to target
+		return(1);
+	}
+}
+
+
+
+#########################################################################################################################################################################
+#
+# generate a hex-encoded coinbase transaction
+#
+sub make_coinbase {
+
+	my ($template, $outputs) = @_;
+
+	my @outputs = @{$outputs};	# dereference outputs
+
+	my $coinbase = substr($template->{'coinbasetxn'}->{'data'}, 0, 110);	# transaction header & coinbase input
+
+	my $txn_out = txn_out( $template->{'coinbasetxn'}->{'foundersaddress'}, $template->{'coinbasetxn'}->{'foundersreward'});
+
+	my $reward = block_reward($template->{'coinbasetxn'}->{'data'}) - $template->{'coinbasetxn'}->{'foundersreward'};
+
+	my $payout_addr;
+	foreach my $out (@outputs) {
+
+		if (!exists $out->{'percent'}) {				# no percentage, gets remaining block reward
+			$payout_addr = $out->{'address'};
+		}
+		else {								# fixed percentage, generate output
+			my $amount = int (($out->{'percent'} * $reward) / 100);	# reduce remaining reward
+			$txn_out .= txn_out( $out->{'address'}, $amount);
+			$reward -= $amount;
+		}
+	}
+	$txn_out .= txn_out( $payout_addr, $reward);				# last txn is the remaining reward
+
+	$txn_out .= '00000000000000000000000000000000000000';			# final parts of txn
+
+	return($coinbase . hexCompactSize(scalar @outputs + 1) . $txn_out);
+}
+
 
 #########################################################################################################################################################################
 #
@@ -35,6 +120,7 @@ sub nbits_to_target {
 	return($target);								# return target
 }
 
+
 #########################################################################################################################################################################
 #
 # generate hex-encoded transparent output given the payment address & amount (zats)
@@ -43,15 +129,33 @@ sub txn_out {
 
 	my ($address, $zats) = @_;							# payment address, amount in zats
 
+	print "txn_out() : $address, $zats\n";
+
 	my $amount = unpack("H*", reverse pack("H*", sprintf("%016X", $zats)));		# 8-bytes, little-endian
 
-	my $script = unpack("H*", substr(decode_base58check($address),2));		# raw script
+	my $script = addr_to_script($address);						# raw script
+
+	return($amount . $script);
+}
+
+#########################################################################################################################################################################
+#
+# get hex-encoded payment script bytes from address
+#
+sub addr_to_script {
+
+	my ($address) = @_;								# payment address
+
+	my $payhash = unpack("H*", substr(decode_base58check($address),2));		# raw script
 
 	if ( $address =~ m/^.1/) {							# pay to t1/s1
-		return($amount . '76a91419' . $script . '88ac');
+
+		return($payhash = '1976a914' . $payhash . '88ac');
+
 	}
 	elsif ( $address =~ m/^.3/) {							# pay to t3/s3
-		return($amount . 'a91417' . $script . '87');
+
+		return($payhash = 'a914' . $payhash . '87');
 	}
 }
 
@@ -60,7 +164,7 @@ sub txn_out {
 #
 # get block reward from hex-encoded coinbase transaction
 #
-sub blockReward {
+sub block_reward {
 
 	my ($hexData) = @_;								# coinbase transaction as hex-encoded string
 
@@ -90,10 +194,13 @@ sub hexCompactSize {
 	my ($hexData, $type) = @_;
 
 	if ($type eq 's') {
-		$length = length($_[0]) / 2;									# hex string, convert to length in bytes
+		$length = length($hexData) / 2;									# hex string, convert to length in bytes
+	}
+	elsif ($type eq 't') {
+		$length = (length($hexData) / 2) + 1;								# transaction, hex-string length plus 1
 	}
 	else {													# integer 
-		$length = $_[0];
+		$length = $hexData;
 	}
 
 	if ($length < 253) {											# 8-bit

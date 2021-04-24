@@ -19,11 +19,13 @@ my $config = {																# DEFAULT CONFIGURATION
 	client_type => 'yak-yec',													# client type
 	client_key  => 'changethiskey',													# client encryption key, to send notifications
 	web => 'ws://127.0.0.1:8834',													# websocket server
+	minerport => 3333,														# mining pool port number
+	minerfee => 0.25,														# mining pool fee (percentage of block reward)
 	timer => 60,															# interval timer
 	fee => 1000,															# viewkey monitoring fee (Yatoshis per block)
 	debug => 5,															# debugging output level
 	node_client => 'ycash-cli',													# fullnode client binary
-	librust => './rust/ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
+	librust => './rust/ycash/target/debug/librustycash.so'										# path to librustzcash.so (dynamic library built from librustzcash)
 
 };
 
@@ -44,6 +46,10 @@ use FFI::Platypus;															# FFI interface to librustzcash
 use FFI::Platypus::Buffer qw( scalar_to_buffer);											# 
 use FFI::Platypus::Memory qw( malloc memcpy free);											# 
 
+use IO::Handle;																# socket handlers for mining
+use IO::Socket;
+use IO::Select;
+
 use Cwd qw(abs_path);															# get install/working directory
 use File::Basename;
 our $install = dirname(abs_path($0));			
@@ -52,6 +58,7 @@ require "$install/modules/common.pm";													# common subs
 require "$install/modules/bech32.pm";													# bech32 encode/decode 
 require "$install/modules/aes256.pm";													# AES256 encrypt/decrypt
 require "$install/modules/packet.pm";													# yak packet generation/parsing
+require "$install/modules/mining.pm";													# block mining
 
 my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT);				# packet types we deliver, remove from array to disable
 
@@ -106,14 +113,18 @@ common::debug(0, "WEB: $config->{'web'}");
 common::debug(0, "REG: $config->{'addr'}");
 common::debug(0, "IVK: $config->{'ivk'}");
 
+																	# FULLNODE CONNECTION
+																	#
 my $info  = node_cli('getblockchaininfo', '', 'abort');											# current chain info, abort if node is down
-
 common::debug(0, "Checking node sync...");
 while ( ($info->{'blocks'} != $info->{'headers'} ) && ($info->{'verificationprocess'} < 1) ) {						# delay until node is synced
 	sleep(30);
 	$info  = node_cli('getblockchaininfo', '', '');											# reload chain info
 }
 my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
+
+
+
 
 my $ctx = ZMQ::FFI->new();														# ZMQ CONNECTION
 my $zmq_socket = $ctx->socket(ZMQ_SUB);													 
@@ -137,6 +148,51 @@ foreach my $txn ( @{$txn_reg} ) {													#
 	}																#
 }																	#
 print "Loaded " . scalar @viewkey . " client viewkey(s)\n";										#
+
+
+
+my $pool_listen;		# listening socket
+my $pool_select;		# pool socket selector
+my $miner;			# hash of connected clients					
+my $miner_conn;			# mining client connection hash
+my $miner_idx = 0;		# mining client connection counter
+
+if ($node_config->{'mineraddress'}) {													# STRATUM MINING
+
+	common::debug(0, "MINING ENABLED : Address: $node_config->{'mineraddress'}, Fee: $config->{'minerfee'}\%");
+
+	$pool_listen = IO::Socket::INET->new (
+		LocalPort => $config->{'minerport'},											# listening port number
+		Proto => 'tcp',
+		Listen => SOMAXCONN,													# 
+		reuse => 1,
+		Blocking => 0														# non-blocking socket
+	);
+	$pool_select = IO::Select->new($pool_listen);
+	
+	$block->{'template'} = node_cli('getblocktemplate', '', '');									# get mining template
+}
+
+
+
+# TODO: Testing here
+#
+my $coinbase = mining::make_coinbase($block->{'template'}, 
+	[ 
+		{ address => $node_config->{'mineraddress'}, percent => $config->{'minerfee'} },		# pool fee
+		{ address => 's1aAL22w9wYQkKT8bm9kC7H3WoFbCux7gHV', percent => 0.5 },			# chilebob beer fund
+		{ address => 's1UkXhuyJw4ghsxrMVfFbV5ThequVh1yEmG' }					# the miner
+	]
+);
+
+my $coinbase_txid = mining::hash_this($coinbase);
+
+print "TXID : $coinbase_txid\n";
+print "DATA : $coinbase\n";
+
+exit;
+
+
 
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});								# WEBSOCKET CLIENT
 
@@ -323,17 +379,107 @@ while ($running >= 0) {
 	
 						@viewkey = common::xfvk_active($block->{'height'});					# check viewkeys for expiry
 
-						if ($node_config->{'mineraddress'}) {							# MINING POOL
-							my $template = node_cli('getblocktemplate', '', '');				# get block template
+						if ($node_config->{'mineraddress'}) {							# START MINING NEW BLOCK
+
+							$block->{'template'} = node_cli('getblocktemplate', '', '');			# get new block template
+
 							# TODO: Send block template to yak-yak
 							# TODO: Hopefully, someone will mine it !
 						}
 					}
 				}
 	
-				if (scalar @packet == 0) {										# nothing to do ? time for a nap :-)
-					sleep(1);											#
-				}													#
+				if (scalar @packet == 0) {										# nothing to do ? lets talk to the miners
+
+					my @miner_ready = $pool_select->can_read(0); 							#TODO: MINING : Parse request from mining clients
+					my @miner_all   = $pool_select->can_write(0);
+
+					if (@miner_ready) {										# loop through all connections with requests
+
+						foreach my $fh (@miner_ready) {
+
+							if ($fh == $pool_listen) {							# listening socket, new connection
+
+								my $new = $pool_listen->accept;						# accept connection
+								$pool_select->add($new);						# add to active
+
+								$miner_conn->{$new->fileno} = $miner_idx;				# add miners id number to hash of connections
+
+								$miner->{$miner_idx}->{'fh'} = $new->fileno;				# set up new miner 
+								$miner->{$miner_idx}->{'ipaddr'} = $new->peerhost;
+								$miner->{$miner_idx}->{'connected'} = time;
+								$miner->{$miner_idx}->{'updated'} = time;
+								$miner->{$miner_idx}->{'block'} = 0;
+								$miner->{$miner_idx}->{'target'} = 0;
+								$miner->{$miner_idx}->{'jobnumber'} = 0;
+
+								$miner_idx++;
+							}
+							else {
+
+								my $id = $miner->{$fh->fileno};						# get index number from connection hash
+
+								my $req = read_json(<$fh>);						# miner request
+
+								if ($req->{'method'} eq 'mining.subscribe') {				# client connects to stratum
+
+									$miner->{$id}->{'software'} = $req->{'params'}[0];		# log mining software
+									$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);		# random nonce1 (16 hex-chars, 8-bytes)
+
+									write_miner($id, "\{\"id\":$req->{'id'},\"result\":\[null,\"$miner->{$id}->{'nonce1'}\"\],\"error\":null\}\n", $mining::CLIENT_SUBSCRIBED);
+								}
+
+								elsif ($req->{'method'} eq 'mining.authorize') {			# username/password 
+
+									if (common::addr_type($req->{'params'}[0]) eq 'saddr') {	# client username, payment address & MUST be a saddr
+										$miner->{$id}->{'address'} = $req->{'params'}[0];
+										write_miner($id, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $mining::CLIENT_AUTHORIZED); 
+									}
+
+									else {
+										write_miner($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Auth Failed\"}\n", $mining::CLIENT_DISCONNECT);
+									}
+								}
+
+								elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {
+									write_miner($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $mining::CLIENT_AUTHORIZED);
+
+								}
+
+								elsif ($req->{'method'} eq 'mining.submit') {				# we found a block!! (maybe)
+									# TODO: Assemble the block
+									# TODO: Submit block
+									
+									# TODO: Tell miner success/fail
+									
+									write_miner($id, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $mining::CLIENT_IDLE); 
+									
+									foreach my $idx (keys %$miner) {					# all active miners need new work
+										if ($miner->{$idx}->{'state'} = $mining::CLIENT_ACTIVE) {
+											$miner->{$idx}->{'state'} = $mining::CLIENT_IDLE;
+										}
+									}
+									
+									# write_miner($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Rejected\"}\n", $mining::CLIENT_IDLE);
+
+								}
+								else {									# weird request, disconnect miner
+									disconnect_miner($fh);
+								}
+							}
+						}
+					}
+					usleep 100_00;											# short nap, be nice to the server
+
+					# TODO: TARGETTED -> WORK
+					# TODO: IDLE -> TARGETS
+					# TODO: SUBSCRIBED -> TARGETS
+					
+					# TODO: AUTHORISED & expired -> DISCONNECTING
+					# TODO: SUBSCRIBED & expired -> DISCONNECTING
+					# TODO: DISCONNECTED need DISCONNECTING
+					
+				}	
 			}
 		}
 	}
@@ -353,7 +499,14 @@ sub shutdown {
 
         push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});					# add packet to buffer
 
-	$running = 2;															# set runtime flag so packet buffer is flushed
+	foreach my $fh (@miner) {													# disconnect all miners
+		if ($fh != $pool_listen) {
+			disconnect_miner($fh);
+		}
+	}
+	close ($pool_listen);														# close pool listening socket
+
+	$running = 2;															# set runtime flag to flush buffer & exit
 }
 
 #######################################################################################################################################
@@ -376,6 +529,9 @@ sub interval_timer {
 			push @announce, 0;
 		}
 		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});	
+
+		# TODO: MINING
+		# TODO: refresh connected miners before they timeout
 	}
 }
 
@@ -495,4 +651,50 @@ sub decrypt_note {
 	);
 	return( {status => $result, addr => $addr_ret, value => $value_ret, memo => $memo_ret} );
 }
+
+
+#######################################################################################################################################
+#
+# Parse JSON string
+#
+sub read_json {
+
+	my ($raw) = @_;
+
+	eval { decode_json($raw) };		# eval first, bad JSON kills puppies
+
+	if (!$@) {				# 
+		return(decode_json($raw));
+	}
+}
+
+
+#######################################################################################################################################
+#
+# Disconnect mining client
+#
+sub disconnect_miner {
+
+	my ($fh) = @_;
+
+	$pool_select->remove($fh);
+	$fh->shutdown(2);
+}
+
+
+#######################################################################################################################################
+#
+# Send to mining client & update status
+#
+sub write_miner {
+
+	my ($id, $json, $state) = @_;
+
+	$miner->{$id}->{'fh'}->write($json);
+
+	$miner->{$id}->{'updated'} = time;
+	$miner->{$id}->{'state'} = $state;
+}
+
+
 
