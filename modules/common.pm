@@ -332,3 +332,29 @@ sub read_json {
         }
 }
 
+
+#############################################################################################################################################################################
+#
+# query node client, return JSON 
+#
+sub node_cli {
+
+	my ($command, $data, $failure) = @_;
+
+	my $response = `$main::node_client $command $data 2>/dev/null`;									# every time you use backticks a puppy dies :-(
+
+	my $json = common::read_json($response);											# bad JSON kills puppies too
+
+	if ($json) {
+		return($json);
+	}
+	elsif ($failure eq 'abort') {													# 'abort' flag means we shutdown on failure
+
+       		my @announce = ( $config->{'nodename'}, $config->{'viewkeyfee'}, $config->{'addr'}, 0 );				# send announcement that we're offline
+       		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});				# add packet to buffer
+		$running = 2;														# set runtime flag so packet buffer is flushed
+	}
+}
+
+1;
+

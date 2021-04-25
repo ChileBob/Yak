@@ -33,6 +33,10 @@ my $config = {																# DEFAULT CONFIGURATION
 #
 #########################################################################################################################################################################
 
+our $node_client = 'ycash-cli';														# fullnode command line client
+
+$SIG{INT} = \&shutdown;															# gracefull shutdown
+
 use Data::Dumper;															# debugging
 
 use ZMQ::FFI qw(ZMQ_SUB);														# ZMQ connection to fullnode
@@ -52,67 +56,101 @@ require "$install/modules/packet.pm";													# yak packet generation/parsin
 require "$install/modules/blake2b.pm";													# needed by mining.pm
 require "$install/modules/mining.pm";													# mining
 require "$install/modules/stratum.pm";													# stratum server
-
-# TODO: If not configured we should disable payment detection
 require "$install/modules/librust.pm";													# FFI subs to use rust libraries
-librust::init( "$install/rust/$config->{'librust'}" );											# load rust library & subs
+
+my $running = 0;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
 
 my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT);				# packet types we deliver, remove from array to disable
 
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args
 
-our $node_client = 'ycash-cli';														# node command line client
+our $key = $config->{'client_key'};													# yak-yak encryption key, shared with modules
+if ($key eq 'changethiskey') {
+	common::debug(0, "\nWARNING!!! YOU MUST CHANGE THE WEBSOCKET ENCRYPTION KEY !!!");
+}
+
 my $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
 
-if ( !exists($node_config->{'zmqpubrawtx'}) || !exists($node_config->{'zmqpubhashblock'}) ) {
-	common::debug(0, "You must specify 'zmqpubhashblock' and 'zmqpubrawtx' in ycash.conf");
+my $info  = common::node_cli('getblockchaininfo', '', 'abort');										# attempt node RPC connection, abort if fails
+
+common::debug(0, "\nChecking node sync...");
+while ( ($info->{'blocks'} != $info->{'headers'} ) && ($info->{'verificationprocess'} < 1) ) {						# delay until node is synced
+	sleep(30);
+	$info  = common::node_cli('getblockchaininfo', '', '');										# reload chain info
+}
+
+my $block = common::node_cli('getblock', $info->{'bestblockhash'}, 'abort');								# load last block, abort if node is down
+
+
+if ( ($node_config->{'mineraddress'} || $config->{'librust'}) && ($node_config->{'zmqpubrawtx'} ne $node_config->{'zmqpubhashblock'} )) {
+	common::debug(0, "\nBad configuration, 'zmqpubhashblock' and 'zmqpubrawtx' MUST use the same port, update ycash.conf\n");
+	exit(1);
+}
+
+
+if ($config->{'librust'}) {														# we're configured for payment detection
+
+	if ( !exists($node_config->{'zmqpubrawtx'}) ) {											# ZMQ : transaction notifications needed
+		common::debug(0, "\nShielded payment detection requires 'zmqpubrawtx' to be configured in ycash.conf\n");
+		exit(1);
+	}
+	librust::init( "$install/rust/$config->{'librust'}" );								
+	$running = 1;
+}
+
+if ($node_config->{'mineraddress'}) {													# we're configured for mining	
+
+	if (!exists($node_config->{'zmqpubhashblock'}) ) {										# ZMQ : block notifications needed
+		common::debug(0, "\nStratum mining pool server requires 'zmqpubhashblock' to be configured in ycash.conf");
+		exit(1);
+	}
+
+	common::debug(0, "\nMINING POOL ENABLED :-\n- Addr : $node_config->{'mineraddress'}\n- Fee  : $config->{'poolfee'}\%");
+	stratum::start($config->{'poolport'}, $node_config->{'mineraddress'}, $config->{'poolfee'});					# open listening port
+	$running = 1;
+}
+
+if (!$running) {															# make sure something was configured
+	common::debug(0, "\nNothing to do!! Please configure for pool mining, shielded payment detection, or both !\n");
 	exit;
 }
-if ( $node_config->{'zmqpubrawtx'} ne $node_config->{'zmqpubhashblock'} ) {
-	common::debug(0, "'zmqpubhashblock' and 'zmqpubrawtx' MUST use the same port.");
-	exit;
-}
-
-our $key = $config->{'client_key'};													# yak-yak encryption key, shared with modules
-
-$SIG{INT} = \&shutdown;															# gracefull shutdown
-
-my $running = 1;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
-my @packet;																# outbound packet buffer
 
 our $monitored;																# hash of monitored viewkeys
 our @viewkey;																# client viewkeys with active monitoring
 
+my @packet;																# outbound packet buffer
 my $timer = time;															# interval timer count
 
-my @keys = common::keys_load('yak-yec.keys');												# load viewkeys
 
+my @keys = common::keys_load('yak-yec.keys');												# load viewkeys
 $config->{'xfvk'} = common::xfvk_check($keys[0]);											# first key is for registration, make sure its valid !
-if ($config->{'xfvk'}) {    														# 
+if ($config->{'xfvk'} && $config->{'librust'}) {    											# 
+
 	$config->{'addr'} = librust::xfvk_to_addr($config->{'xfvk'});									# derive address
 	$config->{'ivk'}  = librust::xfvk_to_ivk($config->{'xfvk'});									# derive ivk
-}
-else {																	# MUST have a valid registration viewkey
-	print("Registration viewkey is NOT VALID ! Aborting\n");
-	exit(1);
-}
+	$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;										# add to monitoring, no expiry block
 
-$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;											# add to monitoring, no expiry block
+	common::debug(0, "\nPAYMENT DETECTION ENABLED :-\n- Addr : $config->{'addr'}\n- Fee  : $config->{'viewkeyfee'} yoshis/block\n- IVK  : $config->{'ivk'}\n");
 
-common::debug(o, "ZMQ: $node_config->{'zmqpubrawtx'}");											# show config
-common::debug(0, "WEB: $config->{'web'}");
-common::debug(0, "REG: $config->{'addr'}");
-common::debug(0, "IVK: $config->{'ivk'}");
+	my $txn_reg = common::node_cli("z_listreceivedbyaddress $config->{'addr'}");							# CLIENT VIEWKEY REGISTRATION
 
-																	# FULLNODE CONNECTION
+	if (!$txn_reg) {														#
+		common::debug(0, "\nThe registration zaddr (or viewkey) is not in the node wallet!! Aborting!!");				#
+		common::debug(0, "\nImport the IVK (incoming viewkey) to the fullnode and try again.");					#
+		exit(1);														#
+	}																#
 																	#
-my $info  = node_cli('getblockchaininfo', '', 'abort');											# current chain info, abort if node is down
-common::debug(0, "Checking node sync...");
-while ( ($info->{'blocks'} != $info->{'headers'} ) && ($info->{'verificationprocess'} < 1) ) {						# delay until node is synced
-	sleep(30);
-	$info  = node_cli('getblockchaininfo', '', '');											# reload chain info
+	foreach my $txn ( @{$txn_reg} ) {												# 
+																	#
+		my $txn_detail = common::node_cli("gettransaction", $txn->{'txid'}, '');						# get transaction detail
+		my $txn_block  = common::node_cli("getblock", $txn_detail->{'blockhash'}, '');						# get block transaction was mined in
+																	#
+		if (my $xfvk = common::memo_to_xfvk($txn->{'memo'})) {										
+			@viewkey = common::xfvk_monitor($xfvk, ($txn->{'amount'} * 100000000), $txn_block->{'height'}, $block->{'height'});
+		}															
+	}															
+	print "Loaded " . scalar @viewkey . " client viewkey(s)\n";							
 }
-my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
 
 
 my $ctx = ZMQ::FFI->new();														# ZMQ CONNECTION
@@ -120,37 +158,9 @@ my $zmq_socket = $ctx->socket(ZMQ_SUB);
 $zmq_socket->connect($node_config->{'zmqpubrawtx'});													 
 $zmq_socket->subscribe('');							 
 
+stratum::new_work();															# put miners to work
 
-my $txn_reg = node_cli("z_listreceivedbyaddress $config->{'addr'}");									# CLIENT VIEWKEY REGISTRATION
-
-if (!$txn_reg) {															#
-	common::debug(0, "The registration zaddr (or viewkey) is not in the node wallet!! Aborting!!");					#
-	common::debug(0, "Import the IVK (incoming viewkey) to the fullnode and try again.");						#
-	exit(1);															#
-}																	#
-																	#
-foreach my $txn ( @{$txn_reg} ) {													# 
-																	#
-	my $txn_detail = node_cli("gettransaction", $txn->{'txid'}, '');								# get transaction detail
-	my $txn_block  = node_cli("getblock", $txn_detail->{'blockhash'}, '');								# get block transaction was mined in
-																	#
-	if (my $xfvk = common::memo_to_xfvk($txn->{'memo'})) {										# search memo for viewkey
-		@viewkey = common::xfvk_monitor($xfvk, ($txn->{'amount'} * 100000000), $txn_block->{'height'}, $block->{'height'});	#
-	}																#
-}																	#
-print "Loaded " . scalar @viewkey . " client viewkey(s)\n";										#
-
-
-if ($node_config->{'mineraddress'}) {													# STRATUM MINING
-
-	stratum::start($config->{'poolport'}, $node_config->{'mineraddress'}, $config->{'poolfee'});					# open listening port
-
-	stratum::new_work(node_cli('getblocktemplate', '', ''));									# put miners to work
-
-	common::debug(0, "MINING ENABLED : Address: $node_config->{'mineraddress'}, Fee: $config->{'poolfee'}\%");
-}
-
-
+common::debug(0, "Connecting to socket server : $config->{'web'}");
 
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});								# WEBSOCKET CLIENT
 
@@ -165,7 +175,7 @@ while ($running >= 0) {
 
 	if (!$tcp_socket) {														# not connected, delay before retrying
 		my $delay = int rand(5) + 5;												 
-		common::debug ($config->{'debug'}, "WEB: $config->{'web'} : Failed to reconnect!! Trying again in $delay seconds");
+		common::debug (0, "WEB: $config->{'web'} : Failed to reconnect!! Trying again in $delay seconds");
 		sleep($delay);
 	}
 	else {																# successful reconnection
@@ -201,6 +211,7 @@ while ($running >= 0) {
 				}
 				else {													# ignore server responses 'cos we just dont care
 					if ($buf ne 'OK') {											
+						
 						# TODO : Watch for requests here
 						#
 						# TODO: Websocket mining clients will appear here...
@@ -215,7 +226,7 @@ while ($running >= 0) {
 		$client->write("BASE64:$config->{'client_type'}");									# subscribe for BASE64 transport & send type
 	
 		while ($running) {
-    
+   			 
 			if ($tcp_socket) {												# confirm connection is up
 
 				DELIVER: if (scalar @packet > 0) {									# send oldest packet
@@ -260,7 +271,7 @@ while ($running >= 0) {
    	 
 					if ($zmq_parts[0] eq 'rawtx') {									# raw transaction    
 
-						my $txn = node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');		# decode raw transaction using node RPC
+						my $txn = common::node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');	# decode raw transaction using node RPC
 
 						if (common::notify_check($packet::PKT_YEC_TRANSPARENT, \@notifications)) {		# check transparent notifications are enabled
 						
@@ -326,7 +337,7 @@ while ($running >= 0) {
 
 					elsif ($zmq_parts[0] eq 'hashblock') {								# NEW BLOCK
 
-						$block = node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');			# update block, abort on failure
+						$block = common::node_cli('getblock', unpack("H*", $zmq_parts[1]), 'abort');		# update block, abort on failure
 
 						if (common::notify_check($packet::PKT_CONFIRMATION, \@notifications)) {			# CONFIRMATIONS
 
@@ -343,13 +354,14 @@ while ($running >= 0) {
 
 						if ($node_config->{'mineraddress'}) {							# START MINING NEW BLOCK
 
-							stratum::new_work(node_cli('getblocktemplate', '', ''));			# put miners to work 
+							stratum::new_work();								# put miners to work 
 						}
 					}
 				}
 	
 				stratum::update();											# process any miner requests
 			}
+			usleep(100_100);												# lets not beat up the server
 		}
 	}
 }
@@ -386,7 +398,7 @@ sub interval_timer {
 		my @announce = ( $config->{'nodename'}, $config->{'viewkeyfee'}, $config->{'addr'} );					# announce this node
 		common::debug($config->{'debug'}, "checking node...");		
 
-		if (node_cli('getblockchaininfo', '', '')) {
+		if (common::node_cli('getblockchaininfo', '', '')) {
 			push @announce, 1;
 		}
 		else {
@@ -395,30 +407,6 @@ sub interval_timer {
 		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});	
 
 		# TODO: refresh connected miners before they timeout
-	}
-}
-
-
-#############################################################################################################################################################################
-#
-# query node client, return JSON 
-#
-sub node_cli {
-
-	my ($command, $data, $failure) = @_;
-
-	my $response = `$node_client $command $data 2>/dev/null`;									# every time you use backticks a puppy dies :-(
-
-	my $json = common::read_json($response);											# bad JSON kills puppies too
-
-	if ($json) {
-		return($json);
-	}
-	elsif ($failure eq 'abort') {													# 'abort' flag means we shutdown on failure
-
-       		my @announce = ( $config->{'nodename'}, $config->{'viewkeyfee'}, $config->{'addr'}, 0 );				# send announcement that we're offline
-       		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});				# add packet to buffer
-		$running = 2;														# set runtime flag so packet buffer is flushed
 	}
 }
 

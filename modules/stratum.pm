@@ -24,10 +24,10 @@ use IO::Socket;
 use IO::Select;
 
 my $pool_listen;															# listening socket
-my $pool_select;															# pool socket selector
+my $pool_select;															# socket selector
 
 my $devfee_address  = 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP';										# ChileBob spends this on wine, women & song
-my $devfee_percent  = 0.25;														# but...not much on song!
+my $devfee_percent  = 0.25;														# .....not much on song! :-)
 
 my $poolfee_address = '';
 my $poolfee_percent = 0.25;														# Default pool fee
@@ -38,6 +38,10 @@ my $miner_idx = 0;															# mining client connection counter
 my $miner_shares = {};															# count of shares
 
 my $running = 0;
+
+my $timer = 0;																# interval timer
+my $timer_interval = 30;														# timer reset (seconds)
+
 
 #######################################################################################################################################
 #
@@ -76,16 +80,19 @@ sub start {
 #
 sub new_work {
 
+	my ($id) = @_;																# undef means ALL miners, otherwise miner ID
+
 	if ($running) {
 
-		my ($template) = $_;
+		if (my $template = common::node_cli('getblocktemplate', '', '') ) {								# get block template
 
-		common::debug($debug, "stratum::new_work()");
+			common::debug($debug, "stratum::new_work()");
 
-		#TODO: Send payouts
-		#TODO: Oops..payment has to mature for 100 blocks before it can be used for payment
-	
-		$miner_shares = {};														# clear shares counter
+			#TODO: Send payouts
+			#TODO: Oops..payment has to mature for 100 blocks before it can be used for payment
+			
+			$miner_shares = {};													# clear shares counter
+		}
 	}
 }
 
@@ -208,7 +215,12 @@ sub interval_timer {
 
 	if ($running) {
 
-		# TODO: Prevent miners from timing out
+		if ( (time - $timer) > $timer_interval) {
+
+			# TODO: Prevent miners from timing out
+			
+			$timer = time;														# reset timer
+		}
 	}	
 }
 
