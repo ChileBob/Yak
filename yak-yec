@@ -19,14 +19,12 @@ my $config = {																# DEFAULT CONFIGURATION
 	client_type => 'yak-yec',													# client type
 	client_key  => 'changethiskey',													# client encryption key, to send notifications
 	web => 'ws://127.0.0.1:8834',													# websocket server
-	minerport => 3333,														# mining pool port number
-	minerfee => 0.25,														# mining pool fee (percentage of block reward)
+	poolport => 3333,														# mining pool port number
+	poolfee => 0.25,														# pool fee (percentage)
 	timer => 60,															# interval timer
-	fee => 1000,															# viewkey monitoring fee (Yatoshis per block)
 	debug => 5,															# debugging output level
-	node_client => 'ycash-cli',													# fullnode client binary
-	librust => './rust/ycash/target/debug/librustycash.so'										# path to librustzcash.so (dynamic library built from librustzcash)
-
+	librust => 'ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
+	viewkeyfee => 1000,														# viewkey monitoring fee (Yatoshis per block)
 };
 
 #########################################################################################################################################################################
@@ -43,14 +41,6 @@ use Math::BigInt;															# at some point we need to handle 256-bit ints
 use IO::Socket::INET;															# general purpose networking
 use Protocol::WebSocket::Client;													# websocket client
 
-use FFI::Platypus;															# FFI interface to librustzcash
-use FFI::Platypus::Buffer qw( scalar_to_buffer);											# 
-use FFI::Platypus::Memory qw( malloc memcpy free);											# 
-
-use IO::Handle;																# socket handlers for mining
-use IO::Socket;
-use IO::Select;
-
 use Cwd qw(abs_path);															# get install/working directory
 use File::Basename;
 our $install = dirname(abs_path($0));			
@@ -59,12 +49,19 @@ require "$install/modules/common.pm";													# common subs
 require "$install/modules/bech32.pm";													# bech32 encode/decode 
 require "$install/modules/aes256.pm";													# AES256 encrypt/decrypt
 require "$install/modules/packet.pm";													# yak packet generation/parsing
-require "$install/modules/mining.pm";													# block mining
+require "$install/modules/blake2b.pm";													# needed by mining.pm
+require "$install/modules/mining.pm";													# mining
+require "$install/modules/stratum.pm";													# stratum server
+
+# TODO: If not configured we should disable payment detection
+require "$install/modules/librust.pm";													# FFI subs to use rust libraries
+librust::init( "$install/rust/$config->{'librust'}" );											# load rust library & subs
 
 my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT);				# packet types we deliver, remove from array to disable
 
 $config = common::parse_argv($config, \@ARGV);												# modify config from command line args
 
+our $node_client = 'ycash-cli';														# node command line client
 my $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
 
 if ( !exists($node_config->{'zmqpubrawtx'}) || !exists($node_config->{'zmqpubhashblock'}) ) {
@@ -88,25 +85,18 @@ our @viewkey;																# client viewkeys with active monitoring
 
 my $timer = time;															# interval timer count
 
-my $ffi = FFI::Platypus->new( api => 1);												# FFI
-$ffi->lib( $config->{'librust'} );													# load library
-
-$ffi->attach( 'librustzcash_xfvk_decrypt_note'  => [ 'int', 'string', 'string', 'string', 'string', 'opaque', 'opaque' ] => 'int');	# decrypt note with xfvk 
-$ffi->attach( 'librustzcash_zip32_xfvk_address' => [ 'string', 'string', 'opaque', 'opaque'  ] => 'int');				# derive address from xfvk
-$ffi->attach( 'librustzcash_crh_ivk'            => [ 'string', 'string', 'opaque' ] => 'void');						# derive ivk from ak & nk
-$ffi->attach( 'librustzcash_xfvk_to_ivk'        => [ 'string', 'opaque' ] => 'int');							# derive ivk from xfvk
-
 my @keys = common::keys_load('yak-yec.keys');												# load viewkeys
 
 $config->{'xfvk'} = common::xfvk_check($keys[0]);											# first key is for registration, make sure its valid !
 if ($config->{'xfvk'}) {    														# 
-	$config->{'addr'} = xfvk_to_addr($config->{'xfvk'});										# derive address
-	$config->{'ivk'}  = xfvk_to_ivk($config->{'xfvk'});										# derive ivk
+	$config->{'addr'} = librust::xfvk_to_addr($config->{'xfvk'});									# derive address
+	$config->{'ivk'}  = librust::xfvk_to_ivk($config->{'xfvk'});									# derive ivk
 }
 else {																	# MUST have a valid registration viewkey
 	print("Registration viewkey is NOT VALID ! Aborting\n");
 	exit(1);
 }
+
 $monitored->{$config->{'xfvk'}}->{'expiry'} = -1;											# add to monitoring, no expiry block
 
 common::debug(o, "ZMQ: $node_config->{'zmqpubrawtx'}");											# show config
@@ -125,14 +115,14 @@ while ( ($info->{'blocks'} != $info->{'headers'} ) && ($info->{'verificationproc
 my $block = node_cli('getblock', $info->{'bestblockhash'}, 'abort');									# last block, abort if node is down
 
 
-
-
 my $ctx = ZMQ::FFI->new();														# ZMQ CONNECTION
 my $zmq_socket = $ctx->socket(ZMQ_SUB);													 
 $zmq_socket->connect($node_config->{'zmqpubrawtx'});													 
 $zmq_socket->subscribe('');							 
 
+
 my $txn_reg = node_cli("z_listreceivedbyaddress $config->{'addr'}");									# CLIENT VIEWKEY REGISTRATION
+
 if (!$txn_reg) {															#
 	common::debug(0, "The registration zaddr (or viewkey) is not in the node wallet!! Aborting!!");					#
 	common::debug(0, "Import the IVK (incoming viewkey) to the fullnode and try again.");						#
@@ -151,29 +141,15 @@ foreach my $txn ( @{$txn_reg} ) {													#
 print "Loaded " . scalar @viewkey . " client viewkey(s)\n";										#
 
 
-my $pool_listen;		# listening socket
-my $pool_select;		# pool socket selector
-
-my $miner;			# hash of connected clients					
-my $miner_conn;			# mining client connection hash
-my $miner_idx = 0;		# mining client connection counter
-my $miner_shares = {};		# count of shares
-
 if ($node_config->{'mineraddress'}) {													# STRATUM MINING
 
-	common::debug(0, "MINING ENABLED : Address: $node_config->{'mineraddress'}, Fee: $config->{'minerfee'}\%");
+	stratum::start($config->{'poolport'}, $node_config->{'mineraddress'}, $config->{'poolfee'});					# open listening port
 
-	$pool_listen = IO::Socket::INET->new (
-		LocalPort => $config->{'minerport'},											# listening port number
-		Proto => 'tcp',
-		Listen => SOMAXCONN,													# 
-		reuse => 1,
-		Blocking => 0														# non-blocking socket
-	);
-	$pool_select = IO::Select->new($pool_listen);
-	
-	$block->{'template'} = node_cli('getblocktemplate', '', '');									# get mining template
+	stratum::new_work(node_cli('getblocktemplate', '', ''));									# put miners to work
+
+	common::debug(0, "MINING ENABLED : Address: $node_config->{'mineraddress'}, Fee: $config->{'poolfee'}\%");
 }
+
 
 
 my ($web_type, $web_ip, $web_port) = common::uri_split($config->{'web'});								# WEBSOCKET CLIENT
@@ -184,7 +160,7 @@ while ($running >= 0) {
 		PeerAddr => $web_ip,													#
 		PeerPort => $web_port,													#
 		Proto => 'tcp',														#
-		Blocking => 1														# blocking socket but we dont care
+		Blocking => 1														# TODO: This needs to be a non-blocking socket
 	);
 
 	if (!$tcp_socket) {														# not connected, delay before retrying
@@ -225,8 +201,10 @@ while ($running >= 0) {
 				}
 				else {													# ignore server responses 'cos we just dont care
 					if ($buf ne 'OK') {											
-# TODO : Could watch for requests here
-#						print "$buf\n";
+						# TODO : Watch for requests here
+						#
+						# TODO: Websocket mining clients will appear here...
+						# print "$buf\n";
 					}
 				}
 			}
@@ -271,7 +249,9 @@ while ($running >= 0) {
 					exit(0);
 				}
 
-				interval_timer();											# timed events
+				interval_timer();											# yak-yec timed events
+
+				stratum::interval_timer();										# stratum server timed events
 																	
 																	########################################################
 				while ($zmq_socket->has_pollin) {									# ZMQ
@@ -309,7 +289,7 @@ while ($running >= 0) {
 
 									VIEWKEY: foreach my $xfvk ($config->{'xfvk'}, @viewkey) {			# loop through all viewkeys
 
-										my $result = decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
+										my $result = librust::decrypt_note ($block->{'height'}, $xfvk, $vout->{'cmu'}, $vout->{'ephemeralKey'}, $vout->{'encCiphertext'});
 
 										if ($result->{'status'} == 1) {						# decrypted !!! Wooooo!!!! 
 		
@@ -321,7 +301,7 @@ while ($running >= 0) {
 
 												if (my $newkey = common::memo_to_xfvk($result->{'memo'})) {						# viewkey found
 												
-													common::debug($config->{'debug'}, "REGISTRATION : " . xfvk_to_addr($newkey) . " : " . $value);
+													common::debug($config->{'debug'}, "REGISTRATION : " . librust::xfvk_to_addr($newkey) . " : " . $value);
 													@viewkey = common::xfvk_monitor($newkey, $value, $block->{'height'}, $block->{'height'});	# add to monitoring
 													push @data, pack("H*", aes256::keyRandom($packet::shielded_bytes * 2)); 			# dont leak privacy
 												}
@@ -363,105 +343,12 @@ while ($running >= 0) {
 
 						if ($node_config->{'mineraddress'}) {							# START MINING NEW BLOCK
 
-							$block->{'template'} = node_cli('getblocktemplate', '', '');			# get new block template
-
-							# TODO: Send block template to yak-yak
-							# TODO: Hopefully, someone will mine it !
+							stratum::new_work(node_cli('getblocktemplate', '', ''));			# put miners to work 
 						}
 					}
 				}
 	
-				if (scalar @packet == 0) {										# nothing to do ? lets talk to the miners
-
-					my @miner_ready = $pool_select->can_read(0); 							#TODO: MINING : Parse request from mining clients
-					my @miner_all   = $pool_select->can_write(0);
-
-					if (@miner_ready) {										# loop through all connections with requests
-
-						foreach my $fh (@miner_ready) {
-
-							if ($fh == $pool_listen) {							# listening socket, new connection
-
-								my $new = $pool_listen->accept;						# accept connection
-								$pool_select->add($new);						# add to active
-
-								$miner_conn->{$new->fileno} = $miner_idx;				# add miners id number to hash of connections
-
-								$miner->{$miner_idx}->{'fh'} = $new->fileno;				# set up new miner 
-								$miner->{$miner_idx}->{'ipaddr'} = $new->peerhost;
-								$miner->{$miner_idx}->{'connected'} = time;
-								$miner->{$miner_idx}->{'updated'} = time;
-								$miner->{$miner_idx}->{'block'} = 0;
-								$miner->{$miner_idx}->{'target'} = 0;
-								$miner->{$miner_idx}->{'jobnumber'} = 0;
-
-								$miner_idx++;
-							}
-							else {
-
-								my $id = $miner->{$fh->fileno};						# get index number from connection hash
-
-								my $req = read_json(<$fh>);						# miner request
-
-								if ($req->{'method'} eq 'mining.subscribe') {				# client connects to stratum
-
-									$miner->{$id}->{'software'} = $req->{'params'}[0];		# log mining software
-									$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);		# random nonce1 (16 hex-chars, 8-bytes)
-
-									write_miner($id, "\{\"id\":$req->{'id'},\"result\":\[null,\"$miner->{$id}->{'nonce1'}\"\],\"error\":null\}\n", $mining::CLIENT_SUBSCRIBED);
-								}
-
-								elsif ($req->{'method'} eq 'mining.authorize') {			# username/password 
-
-									if (common::addr_type($req->{'params'}[0]) eq 'saddr') {	# client username, payment address & MUST be a saddr
-										$miner->{$id}->{'address'} = $req->{'params'}[0];
-										write_miner($id, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $mining::CLIENT_AUTHORIZED); 
-									}
-
-									else {
-										write_miner($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Auth Failed\"}\n", $mining::CLIENT_DISCONNECT);
-									}
-								}
-
-								elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {
-									write_miner($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $mining::CLIENT_AUTHORIZED);
-
-								}
-
-								elsif ($req->{'method'} eq 'mining.submit') {				# we found a block!! (maybe)
-									# TODO: Assemble the block
-									# TODO: Submit block
-									
-									# TODO: Tell miner success/fail
-									
-									write_miner($id, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $mining::CLIENT_IDLE); 
-									
-									foreach my $idx (keys %$miner) {					# all active miners need new work
-										if ($miner->{$idx}->{'state'} = $mining::CLIENT_ACTIVE) {
-											$miner->{$idx}->{'state'} = $mining::CLIENT_IDLE;
-										}
-									}
-									
-									# write_miner($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Rejected\"}\n", $mining::CLIENT_IDLE);
-
-								}
-								else {									# weird request, disconnect miner
-									disconnect_miner($fh);
-								}
-							}
-						}
-					}
-					usleep 100_00;											# short nap, be nice to the server
-
-					# TODO: TARGETTED -> WORK
-					# TODO: IDLE -> TARGETS
-					# TODO: SUBSCRIBED -> TARGETS
-					
-					# TODO: AUTHORISED & expired -> DISCONNECTING
-					# TODO: SUBSCRIBED & expired -> DISCONNECTING
-					# TODO: DISCONNECTED need DISCONNECTING
-					
-				}	
+				stratum::update();											# process any miner requests
 			}
 		}
 	}
@@ -477,16 +364,11 @@ exit;
 #
 sub shutdown {
 
-        my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'}, 0 );						# send announcement that we're offline
+        my @announce = ( $config->{'nodename'}, $config->{'viewkeyfee'}, $config->{'addr'}, 0 );					# send announcement that we're offline
 
         push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});					# add packet to buffer
 
-	foreach my $fh (@miner) {													# disconnect all miners
-		if ($fh != $pool_listen) {
-			disconnect_miner($fh);
-		}
-	}
-	close ($pool_listen);														# close pool listening socket
+	stratum::shutdown();														# shutdown stratum server
 
 	$running = 2;															# set runtime flag to flush buffer & exit
 }
@@ -501,7 +383,7 @@ sub interval_timer {
 	
 		$timer = time + $config->{'timer'};
 
-		my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'} );						# announce this node
+		my @announce = ( $config->{'nodename'}, $config->{'viewkeyfee'}, $config->{'addr'} );					# announce this node
 		common::debug($config->{'debug'}, "checking node...");		
 
 		if (node_cli('getblockchaininfo', '', '')) {
@@ -512,7 +394,6 @@ sub interval_timer {
 		}
 		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});	
 
-		# TODO: MINING
 		# TODO: refresh connected miners before they timeout
 	}
 }
@@ -524,159 +405,20 @@ sub interval_timer {
 #
 sub node_cli {
 
-	use JSON;
-
 	my ($command, $data, $failure) = @_;
 
-	my $response = `$config->{'node_client'} $command $data 2>/dev/null`;								# every time you use backticks a puppy dies :-(
+	my $response = `$node_client $command $data 2>/dev/null`;									# every time you use backticks a puppy dies :-(
 
-	if (eval { decode_json($response) } ) {												# invalid JSON kills puppies too
-		return(decode_json($response));
+	my $json = common::read_json($response);											# bad JSON kills puppies too
+
+	if ($json) {
+		return($json);
 	}
-	else {																# bad response
-		if ($failure eq 'abort') {												# 'abort' flag means we shutdown now
+	elsif ($failure eq 'abort') {													# 'abort' flag means we shutdown on failure
 
-        		my @announce = ( $config->{'nodename'}, $config->{'fee'}, $config->{'addr'}, 0 );				# send announcement that we're offline
-        		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});			# add packet to buffer
-			$running = 2;													# set runtime flag so packet buffer is flushed
-		}
-	}
-}
-
-#############################################################################################################################################################################
-#
-# LIBRUSTZCASH : subs that summon librustzcash functions, its where the magic happens
-#
-#############################################################################################################################################################################
-
-## Derive incoming viewkey from extended full viewkey
-#
-# TODO: IVK support ?
-#
-sub xfvk_to_ivk {
-
-	my ($xfvk_str) = @_;
-
-	$xfvk_str = common::xfvk_check($xfvk_str);											# check length & prefix
-	if (!$xfvk_str) {
-		return(0);
-	}
-
-	my $ivk_ret = pack("c32", 0);													# allocate memory for response
-	my ($ivk_ptr, $ivk_size) = scalar_to_buffer $ivk_ret;
-
-	librustzcash_xfvk_to_ivk ($xfvk_str, $ivk_ptr);											# where the magic happens
-
-	return(bech32::encode('zivks', $ivk_ret));											# return ivk as bech32 string
-}
-
-
-#######################################################################################################################################
-#
-# Derive payment address from extended full viewkey 
-#
-sub xfvk_to_addr {
-
-	my ($xfvk_str) = @_;														# bech32 encoded extended full viewkey
-
-	$xfvk_str = common::xfvk_check($xfvk_str);											# check length & prefix
-	if (!$xfvk_str) {
-		return(0);
-	}
-	else {
-
-		my $xfvk = bech32::decode($xfvk_str);											# full viewkey (285 chars)
-
-		my $j = pack("c11", 0);													# diversifier (11 bytes);
-
-		my $j_ret = pack("c11", 0);												# RETURNED diversifier
-		my ($j_ptr, $j_size) = scalar_to_buffer $j_ret;		
-
-		my $addr_ret = pack("c43", 0);												# RETURNED address
-		my ($addr_ptr, $addr_size) = scalar_to_buffer $addr_ret;
-
-		librustzcash_zip32_xfvk_address( $xfvk, $j, $j_ptr, $addr_ptr);	# more magic
-
-		return(bech32::encode('ys', $addr_ret));										# return as bech32 encoded string
+       		my @announce = ( $config->{'nodename'}, $config->{'viewkeyfee'}, $config->{'addr'}, 0 );				# send announcement that we're offline
+       		push @packet, packet::generate($packet::PKT_BROADCAST, \@announce, $config->{'client_key'});				# add packet to buffer
+		$running = 2;														# set runtime flag so packet buffer is flushed
 	}
 }
-
-
-#######################################################################################################################################
-#
-# Attempt to decode a sapling transaction 
-#
-sub decrypt_note {
-
-	my ($height, $xfvk, $cmu, $epk, $enc_ciphertext) = @_;										# height (int), hex-encoded strings (all other vars)
-
-	$xfvk = common::xfvk_check($xfvk);												# check viewkey for length & prefix
-	if (!$xfvk) {
-		return(0);
-	}
-
-	my $value_ret = pack("c8", 0);													# allocate memory for returned values
-	my ($value_ptr, $value_size) = scalar_to_buffer $value_ret;
-
-	my $memo_ret = pack("c512", 0); 
-	my ($memo_ptr, $memo_size) = scalar_to_buffer $memo_ret;	
-
-	my $result = librustzcash_xfvk_decrypt_note(											# call the FFI function we attached earlier
-		$height,														# (u32)		block height
-		pack("A285", $xfvk),													# (285-bytes)	full viewkey
-		pack("H64", $cmu),													# (32-bytes)	commitment u-coordinate    
-		pack("H64", $epk),													# (32-bytes)	ephemeral key    
-		pack("H1160", $enc_ciphertext),												# (580-bytes)	encrypted 
-
-		$value_ptr,														# (8-bytes)	value (u64)
-		$memo_ptr														# (512-bytes)	memo (null padded)
-	);
-	return( {status => $result, addr => $addr_ret, value => $value_ret, memo => $memo_ret} );
-}
-
-
-#######################################################################################################################################
-#
-# Parse JSON string
-#
-sub read_json {
-
-	my ($raw) = @_;
-
-	eval { decode_json($raw) };		# eval first, bad JSON kills puppies
-
-	if (!$@) {				# 
-		return(decode_json($raw));
-	}
-}
-
-
-#######################################################################################################################################
-#
-# Disconnect mining client
-#
-sub disconnect_miner {
-
-	my ($fh) = @_;
-
-	$pool_select->remove($fh);
-	$fh->shutdown(2);
-}
-
-
-#######################################################################################################################################
-#
-# Send to mining client & update status
-#
-sub write_miner {
-
-	my ($id, $json, $state) = @_;
-
-	$miner->{$id}->{'fh'}->write($json);
-
-	$miner->{$id}->{'updated'} = time;
-	$miner->{$id}->{'state'} = $state;
-}
-
-
 

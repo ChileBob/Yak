@@ -1,7 +1,6 @@
 #!/usr/bin/perl
-
 #
-# yak-zec : packet generation & parsing
+# yak : packet generation & parsing
 #
 # MIT License (ChileBob)
 #

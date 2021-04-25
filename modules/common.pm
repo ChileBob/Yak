@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# yak-zec : common subs
+# yak : common subs
 #
 # MIT License (ChileBob)
 #
@@ -12,6 +12,7 @@ package common;
 use Data::Dumper;
 use LWP::UserAgent;					# used to POST transaction alerts to URI
 use String::HexConvert ':all';				# convert memo hex-encoded strings
+use JSON;
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
 
@@ -316,6 +317,18 @@ sub config_load {
 	return($conf);
 }
 
+#######################################################################################################################################
+#
+# Safely parse JSON string
+#
+sub read_json {
 
-1;
+        my ($raw) = @_;
+
+        eval { decode_json($raw) };         					    # eval first, bad JSON kills puppies
+
+        if (!$@) {                             					
+                return(decode_json($raw));
+        }
+}
 

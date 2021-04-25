@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# mining subs
+# yak : mining subs
 #
 # MIT License (ChileBob)
 #
@@ -8,8 +8,6 @@
 # Ycash : ys17fsj64ydl93net807xr00ujz2lnrf22cjf4430vvz69vpaat8t3hrdjmkvj7thrw4fdaz7l0pns
 
 package mining;
-
-require "./blake2b.pm";
 
 use Data::Dumper;
 use Bitcoin::Crypto::Base58 qw(:all);

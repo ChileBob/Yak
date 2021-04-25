@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# yak-zec : AES256 encryption/decryption
+# yak : AES256 encryption/decryption
 #
 # MIT License (ChileBob)
 #
