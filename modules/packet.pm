@@ -34,6 +34,9 @@ our $PKT_ZEC_SHIELDED     = 0xf4;
 our $PKT_CONFIRMATION     = 0xf5;
 our $PKT_YEC_TRANSPARENT  = 0xf6;								
 our $PKT_YEC_SHIELDED     = 0xf7;
+
+our $PKT_STRATUM          = 0xf8;									# relay from stratum server
+
 our $PKT_ENCRYPTED_BCAST  = 0xff;									# encrypted data for broadcast
 
 # TRANSPARENT NOTIFICATION (PKT_ZEC_TRANSPARENT, PKT_YEC_TRANSPARENT)
@@ -78,7 +81,7 @@ our $PKT_ENCRYPTED_BCAST  = 0xff;									# encrypted data for broadcast
 # 	<type>		u8										(type)
 # 	<version>	u8										(version)
 
-# TICKER (PTK_TICKER)
+# TICKER (PKT_TICKER)
 #
 # 	<type>		u8										(type)
 # 	<version>	u8										(version)
@@ -88,6 +91,13 @@ our $PKT_ENCRYPTED_BCAST  = 0xff;									# encrypted data for broadcast
 # 													(3-bytes)	currency	(USD, GBP, EUR)
 # 													(8-bytes)	price		(integer component, hex)
 # 													(8-bytes)	price		(decimal decimal, hex)
+
+# STRATUM (PKT_STRATUM)
+#
+# 	<type>		u8										(type)
+# 	<version>	u8										(version)
+# 	<source>	<uint32>									(remote client id)
+# 	<data>		<variable>									(stratum json text)
 
 my $debug   = 5;											# debug verbosity
 
