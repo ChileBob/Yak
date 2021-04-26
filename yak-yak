@@ -63,14 +63,11 @@ Net::WebSocket::Server->new(									# setup websocket server
 
 		foreach my $dest ($serv->connections) {						# loop through all connections
 
-			if ( $client->{$dest}->{'rate'} > $config->{'limit'} ) {
+			if ( $client->{$dest}->{'rate'} > $config->{'limit'} ) {		# rate limit exceeded
 				print "$client->{$dest}->{'type'} : Rate limit exceeded ($client->{$dest}->{'rate'})\n";
 				$serv->disconnect($dest->{'socket'})
 			}
-			else {
-				if ($client->{$dest}->{'type'} && $client->{$dest}->{'rate'} > 0) {	# show number of packets received from each client
-					print "$client->{$dest}->{'type'} : $client->{$dest}->{'rate'}\n";
-				}
+			else {									# reset limiter
 				$client->{$dest}->{'rate'} = 0;
 			}
 		}

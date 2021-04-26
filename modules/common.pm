@@ -348,6 +348,7 @@ sub node_cli {
 	if ($json) {
 		return($json);
 	}
+
 	elsif ($failure eq 'abort') {													# 'abort' flag means we shutdown on failure
 
        		my @announce = ( $config->{'nodename'}, $config->{'viewkeyfee'}, $config->{'addr'}, 0 );				# send announcement that we're offline

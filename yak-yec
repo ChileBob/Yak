@@ -35,19 +35,19 @@ my $config = {																# DEFAULT CONFIGURATION
 
 our $node_client = 'ycash-cli';														# fullnode command line client
 
-$SIG{INT} = \&shutdown;															# gracefull shutdown
+$SIG{INT} = \&shutdown;															# graceful shutdown
 
 use Data::Dumper;															# debugging
 
 use ZMQ::FFI qw(ZMQ_SUB);														# ZMQ connection to fullnode
 use Time::HiRes q(usleep);														# ZMQ polling interval timer
-use Math::BigInt;															# at some point we need to handle 256-bit ints
 use IO::Socket::INET;															# general purpose networking
 use Protocol::WebSocket::Client;													# websocket client
 
-use Cwd qw(abs_path);															# get install/working directory
+use Cwd qw(abs_path);														
 use File::Basename;
-our $install = dirname(abs_path($0));			
+
+our $install = dirname(abs_path($0));													# get install/working directory at runtime
 
 require "$install/modules/common.pm";													# common subs
 require "$install/modules/bech32.pm";													# bech32 encode/decode 
@@ -66,15 +66,15 @@ $config = common::parse_argv($config, \@ARGV);												# modify config from c
 
 our $key = $config->{'client_key'};													# yak-yak encryption key, shared with modules
 
-if ($key eq 'changethiskey') {
+if ($key eq 'changethiskey') {														# using the default key?? bad puppy !! 
 	common::debug(0, "\nWARNING!!! YOU MUST CHANGE THE WEBSOCKET ENCRYPTION KEY !!!");
 }
 
 my $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
 
-my $info  = common::node_cli('getblockchaininfo', '', 'abort');										# attempt node RPC connection, abort if fails
+my $info  = common::node_cli('getblockchaininfo', '', '');										# attempt node RPC connection
 
-while ( $info->{'blocks'} != $info->{'headers'} ) {											# delay until node is synced
+while ( ($info->{'blocks'} != $info->{'headers'} ) || !exists($info->{'blocks'}) ) {							# delay until node is synced
 
 	common::debug(0, "\nWaiting for node sync...");
 	sleep(30);
@@ -88,7 +88,6 @@ if ( ($node_config->{'mineraddress'} || $config->{'librust'}) && ($node_config->
 	common::debug(0, "\nBad configuration, 'zmqpubhashblock' and 'zmqpubrawtx' MUST use the same port, update ycash.conf\n");
 	exit(1);
 }
-
 
 if ($config->{'librust'}) {														# we're configured for payment detection
 
@@ -107,7 +106,7 @@ if ($node_config->{'mineraddress'}) {													# we're configured for mining
 		exit(1);
 	}
 
-	common::debug(0, "\nMINING POOL ENABLED :-\n- Addr : $node_config->{'mineraddress'}\n- Fee  : $config->{'poolfee'}\%");
+	common::debug(0, "\nMINING POOL ENABLED :-\n\n- Pool Addr : $node_config->{'mineraddress'}\n- Pool Port : $config->{'poolport'}\n- Pool Fee  : $config->{'poolfee'}\%\n- Dev Fee   : $stratum::devfee_percent\%");
 	stratum::start($config->{'poolport'}, $node_config->{'mineraddress'}, $config->{'poolfee'});					# open listening port
 	$running = 1;
 }
@@ -119,15 +118,17 @@ if (!$running) {															# make sure something was configured
 }
 
 our $monitored;																# hash of monitored viewkeys
+
 our @viewkey;																# client viewkeys with active monitoring
 
 my @packet;																# outbound packet buffer
-my $timer = time;															# interval timer count
 
+my $timer = time;															# interval timer count
 
 my @keys = common::keys_load('yak-yec.keys');												# load viewkeys
 
 $config->{'xfvk'} = common::xfvk_check($keys[0]);											# first key is for registration, make sure its valid !
+
 
 if ($config->{'xfvk'} && $config->{'librust'}) {    											# 
 
@@ -135,7 +136,7 @@ if ($config->{'xfvk'} && $config->{'librust'}) {    											#
 	$config->{'ivk'}  = librust::xfvk_to_ivk($config->{'xfvk'});									# derive ivk
 	$monitored->{$config->{'xfvk'}}->{'expiry'} = -1;										# add to monitoring, no expiry block
 
-	common::debug(0, "\nPAYMENT DETECTION ENABLED :-\n- Addr : $config->{'addr'}\n- Fee  : $config->{'viewkeyfee'} yoshis/block\n- IVK  : $config->{'ivk'}\n");
+	common::debug(0, "\nPAYMENT DETECTION ENABLED :-\n\n- Addr : $config->{'addr'}\n- Fee  : $config->{'viewkeyfee'} yoshis/block\n- IVK  : $config->{'ivk'}\n");
 
 	my $txn_reg = common::node_cli("z_listreceivedbyaddress $config->{'addr'}");							# CLIENT VIEWKEY REGISTRATION
 
@@ -258,7 +259,7 @@ while ($running >= 0) {
 					}
 				}
 	
-				if ($running == 2) {											# shutdown gracefully
+				if ($running == 2) {											# shutdown 
 					if (scalar @packet > 0) {
 						goto DELIVER;
 					}
@@ -268,7 +269,6 @@ while ($running >= 0) {
 
 				interval_timer();											# yak-yec timed events
 
-				stratum::interval_timer();										# stratum server timed events
 
 																	########################################################
 				while ($zmq_socket->has_pollin) {									# ZMQ

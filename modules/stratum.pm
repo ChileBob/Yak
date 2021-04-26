@@ -11,37 +11,51 @@ package stratum;
 
 my $debug = 0;																# debug verbosity for this package
 
+our $MINER_DISCONNECT  = 0x00;		# - disconnected
+
+our $MINER_NEW         = 0x01;		# - new connection
+our $MINER_SUBSCRIBED  = 0x02;		# - subscribed
+
+our $MINER_AUTHORIZED  = 0x03;		# - authenticated
+our $MINER_IDLE        = 0x10;		# - idle
+our $MINER_TARGETED    = 0x11;		# - targetted
+our $MINER_ACTIVE      = 0x12;		# - active (mining)
+
+
+our $MINER_TCP = 0x01;			# direct connection
+our $MINER_WEB = 0x02;			# via websocket
+
 #########################################################################################################################################################################
 #
 # CHANGING ANYTHING BELOW THIS LINE IS A REALLY BAD IDEA !! 
 #
 #########################################################################################################################################################################
 
-use Data::Dumper;															# debugging
+use Data::Dumper;														# debugging
 
-use IO::Handle;																# socket handlers for mining
+use IO::Handle;															# socket handlers for mining
 use IO::Socket;
 use IO::Select;
 
-my $pool_listen;															# listening socket
-my $pool_select;															# socket selector
+my $pool_listen;														# listening socket
+my $pool_select;														# socket selector
 
-my $devfee_address  = 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP';										# ChileBob spends this on wine, women & song
-my $devfee_percent  = 0.25;														# .....not much on song! :-)
+my $devfee_address  = 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP';									# ChileBob spends this on wine, women & song
+our $devfee_percent  = 0.25;													# .....not much on song! :-)
 
-my $poolfee_address = '';
-my $poolfee_percent = 0.25;														# Default pool fee
+my $poolfee_address = '';													# pool address, overwritted from main config & command line
+my $poolfee_percent = 0.25;													# Default pool fee
 
-my $miner;																# hash of connected clients					
-my $miner_conn;																# mining client connection hash
-my $miner_idx = 0;															# mining client connection counter
-my $miner_shares = {};															# count of shares
+my $miner;															# miner (config/state)
+my $miner_conn;															# miner (connection hash)
 
-my $running = 0;
+my $miner_idx = 1;														# miner client counter
 
-my $timer = 0;																# interval timer
-my $timer_interval = 30;														# timer reset (seconds)
+my $running = 0;														# runtime flag
 
+my $timer_interval = 15;													# timer reset (seconds), refresh miner tasks
+
+my $timer_timeout = 60;														# timeout (seconds), clients inactive for this long are disconnected
 
 #######################################################################################################################################
 #
@@ -49,24 +63,24 @@ my $timer_interval = 30;														# timer reset (seconds)
 #
 sub start {
 
-	my ($port, $address, $fee) = @_;												# listening port number & pool address
+	my ($port, $address, $fee) = @_;											# listening port number & pool address
 
 	if ($address && $port) {
 
-		$poolfee_address = $address;													# pool params 
+		$poolfee_address = $address;											# pool params 
 		$poolfee_percent = 0 + $fee;											
 	
-		$pool_listen = IO::Socket::INET->new (												# open listening socket
+		$pool_listen = IO::Socket::INET->new (										# open listening socket
 			LocalPort => $port,
 			Proto => 'tcp',
-			Listen => SOMAXCONN,													# limit is approx 32k sockets, so plenty
+			Listen => SOMAXCONN,											# limit is approx 32k sockets, so plenty
 			reuse => 1,
-			Blocking => 0														# non-blocking socket
+			Blocking => 0												# non-blocking socket
 		);
 	
-		$pool_select = IO::Select->new($pool_listen);											# port select handler
+		$pool_select = IO::Select->new($pool_listen);									# port select handler
 	
-		$running = 1;															# set runtime flag
+		$running = 1;													# set runtime flag
 	}
 	else {
 		common::debug(0,"Failed to start stratum pool.");
@@ -80,18 +94,53 @@ sub start {
 #
 sub new_work {
 
-	my ($id) = @_;																# undef means ALL miners, otherwise miner ID
+	my ($idx) = @_;		# miner id, specify if we're making work for ONE miner
 
-	if ($running) {
+	my @miner_id;
+	if ($idx) {
+		@miner_id = ( $idx ) ;
+	}
+	else {
+		@miner_id = keys %$miner;
+	}
 
-		if (my $template = common::node_cli('getblocktemplate', '', '') ) {								# get block template
+	if ($running) {															# only if pool is ready to mine
 
-			common::debug($debug, "stratum::new_work()");
+		my $template = common::node_cli('getblocktemplate', '', '');
 
-			#TODO: Send payouts
-			#TODO: Oops..payment has to mature for 100 blocks before it can be used for payment
-			
-			$miner_shares = {};													# clear shares counter
+		foreach my $id (@miner_id) {
+
+			if ($miner->{$id}->{'state'} >= $MINER_AUTHORIZED) {								# only for miners that are ready to work
+
+				$miner->{$id}->{'work'}->{'tx_data'} = mining::make_coinbase($template, [ 				# coinbase transaction
+					{ address => $miner->{$id}->{'addr'}},
+					{ address => $devfee_address, percent => $devfee_percent},
+					{ address => $poolfee_address, percent => $poolfee_percent}
+				]);
+	
+				my @tx_id = hash_this($miner->{$id}->{'work'}->{'tx_data'});						# coinbase txid
+	
+				foreach my $tx ( @{$template->{'transactions'}} ) {							# add remaining transactions
+					push @tx_id, $tx->{'hash'};
+					$miner->{$id}->{'work'}->{'txdata'} .= $tx->{'data'};
+				}
+	
+				$miner->{$id}->{'work'}->{'target'} = $template->{'target'};						# mining difficulty target
+	
+				$miner->{$id}->{'work'}->{'version'}    	  = pack("L", $template->{'version'});			# version    (little-endian)
+				$miner->{$id}->{'work'}->{'merkleroot'} 	  = mining::merkleroot(\@tx_id);			# merkleroot (little-endian)
+				$miner->{$id}->{'work'}->{'previousblockhash'} 	  = reverse_bytes($template->{'previousblockhash'});	# previousblockhash (little-endian)
+				$miner->{$id}->{'work'}->{'finalsaplingroothash'} = reverse_bytes($template->{'finalsaplingroothash'});	# finalsaplingroothash (little-endian)
+				$miner->{$id}->{'work'}->{'time'} 		  = pack("L", time);					# epoch time (little-endian)
+				$miner->{$id}->{'work'}->{'bits'} 		  = reverse_bytes($template->{'bits'});			# block minimum difficulty (little-endian)
+	
+				$miner->{$id}->{'work'}->{'jobnumber'}++;								# increment job number
+				$miner->{$id}->{'work'}->{'shares'} = 0;								# clear share counter
+	
+				if ( $miner->{$id}->{'state'} > $MINER_IDLE ) { 	# tag miner as idle
+					$miner->{$id}->{'state'} = $MINER_IDLE;	
+				}
+			}
 		}
 	}
 }
@@ -104,125 +153,159 @@ sub update {
 
 	if ($running) {
 
-		my @miner_ready = $pool_select->can_read(0); 							#TODO: MINING : Parse request from mining clients
+		my @miner_ready = $pool_select->can_read(0); 									#TODO: MINING : Parse request from mining clients
 
-		if (@miner_ready) {										# loop through all connections with requests
+		if (@miner_ready) {												# loop through all connections with requests
 	
 			foreach my $fh (@miner_ready) {
 	
-				if ($fh == $pool_listen) {							# listening socket, new connection
+				if ($fh == $pool_listen) {									# listening socket, new connection
 	
-					my $new = $pool_listen->accept;						# accept connection
-					$pool_select->add($new);						# add to active
+					my $new = $pool_listen->accept;								# accept connection
+					$pool_select->add($new);								# add to active
 	
-					$miner_conn->{$new->fileno} = $miner_idx;				# add miners id number to hash of connections
+					$miner_conn->{$new->fileno} = $miner_idx;						# add miners id number to hash of connections
 	
-					$miner->{$miner_idx}->{'fh'} = $new->fileno;				# set up new miner 
-					$miner->{$miner_idx}->{'ipaddr'} = $new->peerhost;
-					$miner->{$miner_idx}->{'connected'} = time;
+					$miner->{$miner_idx}->{'state'} = $MINER_NEW;						# tag as new connection
+					$miner->{$miner_idx}->{'type'}  = $MINER_TCP;						# connection type
+					$miner->{$miner_idx}->{'fh'} = $fh;
+					$miner->{$miner_idx}->{'ipaddr'} = $new->peerhost;					# client IP address
+					$miner->{$miner_idx}->{'connected'} = time;						# timestamps
 					$miner->{$miner_idx}->{'updated'} = time;
-					$miner->{$miner_idx}->{'block'} = 0;
-					$miner->{$miner_idx}->{'target'} = 0;
-					$miner->{$miner_idx}->{'jobnumber'} = 0;
+					$miner->{$miner_idx}->{'block'} = 0;							# block number 
+					$miner->{$miner_idx}->{'target'} = 0;							# share target
+					$miner->{$miner_idx}->{'worknumber'} = 1;						# job number
 	
 					$miner_idx++;
 				}
 				else {
 	
-					my $id = $miner->{$fh->fileno};						# get index number from connection hash
+					my $id = $miner->{$fh->fileno};								# get index number from connection hash
 	
-					my $req = common::read_json(<$fh>);						# miner request
+					my $buf = <$fh>;									# read socket
+
+					my $req = common::read_json($buf);							# miner request
 	
-					if ($req->{'method'} eq 'mining.subscribe') {				# client connects to stratum
+					if ($req->{'method'} eq 'mining.subscribe') {						# client connects to stratum
 	
-						$miner->{$id}->{'software'} = $req->{'params'}[0];		# log mining software
-						$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);		# random nonce1 (16 hex-chars, 8-bytes)
+						$miner->{$id}->{'software'} = $req->{'params'}[0];				# log mining software
+
+						$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);				# random nonce1 (16 hex-chars, 8-bytes)
 	
-						miner_write($id, "\{\"id\":$req->{'id'},\"result\":\[null,\"$miner->{$id}->{'nonce1'}\"\],\"error\":null\}\n", $mining::CLIENT_SUBSCRIBED);
+						miner_write($id, "\{\"id\":$req->{'id'},\"result\":\[null,\"$miner->{$id}->{'nonce1'}\"\],\"error\":null\}\n", $MINER_SUBSCRIBED);
 					}
 	
-					elsif ($req->{'method'} eq 'mining.authorize') {			# username/password 
+					elsif ($req->{'method'} eq 'mining.authorize') {					# username/password 
 	
-						if (common::addr_type($req->{'params'}[0]) eq 'saddr') {	# client username, payment address & MUST be a saddr
+						if (common::addr_type($req->{'params'}[0]) eq 'saddr') {			# client username, payment address & MUST be a saddr
 							$miner->{$id}->{'address'} = $req->{'params'}[0];
-							miner_write($id, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $mining::CLIENT_AUTHORIZED); 
+							miner_write($id, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $MINER_IDLE); 
 						}
-	
 						else {
-							miner_write($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Auth Failed\"}\n", $mining::CLIENT_DISCONNECT);
+							miner_write($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Auth Failed\"}\n", $MINER_DISCONNECT);
 						}
 					}
 	
 					elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {
-						miner_write($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $mining::CLIENT_AUTHORIZED);
-	
+
+						miner_write($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $MINER_IDLE);
 					}
 	
-					elsif ($req->{'method'} eq 'mining.submit') {				# client submits a share !
+					elsif ($req->{'method'} eq 'mining.submit') {						# client submits a share !
 	
-						# TODO: Check solution
-						#
-						# - if valid equihash :-
-						# 	increase client share count, 
-						# 	acknowledge share	
-						#
-						# 	check difficulty against target
-						# 	if good
-						# 		submit block
-						# 		parse node response
-						# 		if accepted
-						# 			tag all active miners as IDLE
-						#
-						# - if not valid equihash :-
-						# 	reject the share
+						my $rawblock = $miner->{$id}->{'work'}->{'version'};
+						$rawblock .= $miner->{$id}->{'work'}->{'previousblockhash'};
+						$rawblock .= $miner->{$id}->{'work'}->{'merkleroot'};
+						$rawblock .= $miner->{$id}->{'work'}->{'finalsaplingroothash'};
+						$rawblock .= $req->{'params'}[2];
+						$rawblock .= $miner->{$id}->{'work'}->{'bits'};
+						$rawblock .= "$miner->{$id}->{'nonce1'}$req->{'params'}[3]";
+						$rawblock .= $req->{'params'}[4];
+						$rawblock .= $miner->{$id}->{'work'}->{'tx_data'};
+
+						# TODO: Check solution & difficulty, if both tests pass the block can be submitted & we can play with lower targets
 						
-	
-						# TODO: Tell miner success/fail
-						# miner_write($id, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $mining::CLIENT_IDLE); 
-						# miner_write($id, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Rejected\"}\n", $mining::CLIENT_ACTIVE);
-						# 	
-						# foreach my $idx (keys %$miner) {					# all active miners need new work
-						# 	if ($miner->{$idx}->{'state'} = $mining::CLIENT_ACTIVE) {
-						#		$miner->{$idx}->{'state'} = $mining::CLIENT_IDLE;
-						# 	}
-						# }
-	
+						my $resp = `$main::node_client submitblock $rawblock 2>/dev/null`;				# submit the block
+
+						my $eval = eval { decode_json($resp) };
+
+						if ($@) {											# non-json response
+
+							if ($resp eq '') {									# accepted !
+								miner_write($id, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+								new_work();
+							}
+							else {											# rejected !
+								miner_write($id, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+							}
+						}
+						else {												# json response
+							my $response = decode_json($resp);	
+
+							if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# accepted
+								miner_write($id, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+								new_work();
+							}
+							else {											# rejected
+								miner_write($id, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+							}
+						}
 					}
-					else {									# weird request, disconnect miner
+					else {											# weird request, disconnect miner
 						miner_disconnect($fh);
 					}
 				}
 			}
 		}
+
+		my @miner_all = $pool_select->can_write(0);									# get handles for all connected miners
 	
-		# TODO: TARGETTED -> ACTIVE			(generate & send new work)
-		# TODO: IDLE -> TARGETED			(send target)
-		# TODO: SUBSCRIBED -> TARGETED			(send target)
-		# TODO: ACTIVE -> SUBSCRIBED			(when block mined & accepted)
-		
-		# TODO: AUTHORISED & expired -> DISCONNECTING
-		# TODO: SUBSCRIBED & expired -> DISCONNECTING
-		# TODO: DISCONNECTED need DISCONNECTING
+		foreach my $fh (@miner_all) {											# loop through & disconnect
+
+			if ($fh != $pool_listen) {
+
+				my $id = $miner_conn->{$fh->fileno};								# get index number from connection hash
+
+				if ( (time - $miner->{$id}->{'updated'}) > $timer_timeout) {					# timed out
+
+					$miner->{$id}->{'state'} = $MINER_DISCONNECTED;
+
+					print "miner $id timed out!\n";
+				}
+				
+				if ($miner->{$id}->{'state'} == $MINER_TARGETTED) {						# has target, send new work
+
+					miner_write($id, "\{\"id\":null,\"method\":\"mining.notify\",\"params\":\[\"$miner->{$id}->{'work'}->{'jobnumber'}\",\"$miner->{$id}->{'work'}->{'version'}\",\"$miner->{$id}->{'work'}->{'previousblockhash'}\",\"$miner->{$id}->{'work'}->{'merkleroot'}\",\"$miner->{$id}->{'work'}->{'finalsaplingroothash'}\",\"$miner->{$id}->{'work'}->{'time'}\",\"$miner->{$id}->{'work'}->{'bits'}\",true,\"ZcashPoW\"\]\}\n", $MINER_ACTIVE);
+
+				}
+
+				elsif ($miner->{$id}->{'state'} == $MINER_IDLE) {						# set target
+
+					miner_write($id, "\{\"id\":null,\"method\":\"mining.set_target\",\"params\":\[\"$miner->{'work'}->{'target'}\"\]\}\n", $MINER_TARGETTED);
+				}
+				
+				elsif ($miner->{$id}->{'state'} == $MINER_AUTHORIZED) {						# set target
+					miner_write($id, "\{\"id\":null,\"method\":\"mining.set_target\",\"params\":\[\"$miner->{'work'}->{'target'}\"\]\}\n", $MINER_TARGETTED);
+
+				}		
+				elsif ($miner->{$id}->{'state'} == $MINER_ACTIVE) {						# mining, refresh if close to expiry
+
+					if (time - $miner->{$id}->{'updated'} > $timer_interval) {
+
+						miner_write($id, "\{\"id\":null,\"method\":\"mining.notify\",\"params\":\[\"$miner->{$id}->{'work'}->{'jobnumber'}\",\"$miner->{$id}->{'work'}->{'version'}\",\"$miner->{$id}->{'work'}->{'previousblockhash'}\",\"$miner->{$id}->{'work'}->{'merkleroot'}\",\"$miner->{$id}->{'work'}->{'finalsaplingroothash'}\",\"$miner->{$id}->{'work'}->{'time'}\",\"$miner->{$id}->{'work'}->{'bits'}\",false,\"ZcashPoW\"\]\}\n", $MINER_ACTIVE);
+
+						$miner->{$id}->{'updated'} = time;						# reset timestamp
+					}
+				}
+
+				elsif ($miner->{$id}->{'state'} == $MINER_DISCONNECTED) {					# disconnect
+					print "disconnecting miner $id\n";
+					miner_disconnect($fh);
+				}
+			}
+		}
 	}
 }	
-
-
-#######################################################################################################################################
-#
-# Time based tasks go here
-#
-sub interval_timer {
-
-	if ($running) {
-
-		if ( (time - $timer) > $timer_interval) {
-
-			# TODO: Prevent miners from timing out
-			
-			$timer = time;														# reset timer
-		}
-	}	
-}
 
 
 #######################################################################################################################################
@@ -232,14 +315,15 @@ sub interval_timer {
 sub shutdown {
 
 	if ($running) {
-		my @miner_all = $pool_select->can_write(0);											# get handles for all connected miners
+
+		my @miner_all = $pool_select->can_write(0);									# get handles for all connected miners
 	
-		foreach my $fh (@miner_all) {													# loop through & disconnect
+		foreach my $fh (@miner_all) {											# loop through & disconnect
 			if ($fh != $pool_listen) {
 				miner_disconnect($fh);
 			}
 		}
-		close ($pool_listen);														# close pool listening socket
+		close ($pool_listen);												# close pool listening socket
 	}
 }
 
@@ -252,8 +336,12 @@ sub miner_disconnect {
 
 	my ($fh) = @_;
 
-	$pool_select->remove($fh);
-	$fh->shutdown(2);
+	$pool_select->remove($fh);												# remove from select
+	
+	delete ($miner_conn->{$fh});
+	delete ($miner->{$miner->{$fh->fileno}});										# get index number from connection hash
+
+	$fh->shutdown(2);													# close the socket
 }
 
 
@@ -265,10 +353,23 @@ sub miner_write {
 
 	my ($id, $json, $state) = @_;
 
-	$miner->{$id}->{'fh'}->write($json);
+	if ($miner->{$id}->{'type'} == $MINER_TCP) {										# directly connected miner
 
-	$miner->{$id}->{'updated'} = time;
-	$miner->{$id}->{'state'} = $state;
+		my $fh = $miner->{$id}->{'fh'};
+
+		$fh->write($json);
+	}
+
+	elsif ($miner->{$id}->{'type'} == $MINER_WEB) {										# websocket connection
+
+		common::debug(0, "stratum::miner_write() : Cant talk to websocket miners");
+	}
+
+	$miner->{$id}->{'updated'} = time;											# update timestamp
+
+	$miner->{$id}->{'state'} = $state;											# set miner state
 }
 
-1;
+
+1;	# all packages are true, even the ones that are not, especially the ones that are not
+

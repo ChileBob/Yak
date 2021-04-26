@@ -14,14 +14,6 @@ use Bitcoin::Crypto::Base58 qw(:all);
 use Digest::SHA qw(sha256);
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
-							
-our $CLIENT_NEW         = 0x00;				# - new connection
-our $CLIENT_SUBSCRIBED  = 0x01;				# - subscribed
-our $CLIENT_AUTHORIZED  = 0x02;				# - authenticated
-our $CLIENT_IDLE        = 0x10;				# - idle
-our $CLIENT_TARGETED    = 0x11;				# - targetted
-our $CLIENT_ACTIVE      = 0x12;				# - active (mining)
-our $CLIENT_DISCONNECT  = 0xff;				# - disconnected
 
 
 #########################################################################################################################################################################
@@ -309,7 +301,7 @@ sub merkleroot {
 		}
 		@hashes = @joinedHashes;								# replace hashes with joinedHashes
 	}
-	return($hashes[0]);										# returns hex-encoded big-endian
+	return(reverse_bytes($hashes[0]));								# returns hex-encoded little-endian (clients & header)
 }
 
 
@@ -334,5 +326,28 @@ sub reverse_bytes {											# reverse byte order of a hex-encoded string
 	my ($hexString) = @_;
 
 	return( unpack("H*", reverse pack("H*", $hexString))) ;
+}
+
+
+#########################################################################################################################################################################
+#
+# generate hex-encoded header from block template, nonce & solution - dealing with endian-ness etc
+#
+sub template_to_header {
+
+	my ($template, $nonce, $solution) = @_;
+
+	my $header = pack("L", $template->{'version'});			
+	$header .= reverse_bytes($template->{'previousblockhash'});
+	$header .= reverse_bytes($template->{'merkleroot'});
+	$header .= reverse_bytes($template->{'finalsaplingroot'});
+	$header .= pack("L", $template->{'time'});
+	$header .= reverse_bytes($template->{'bits'});
+
+	$header .= reverse_bytes($nonce);
+
+	$header .= $solution;
+
+	return($header);
 }
 
