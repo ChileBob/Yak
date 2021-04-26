@@ -154,7 +154,13 @@ sub addr_type {
 	if ( ($address =~ m/^s[1,3]/) && length($address) == 35) {
 		return('saddr');
 	}
+	if ( ($address =~ m/^sm/) && length($address) == 35) {				# testnet YEC
+		return('saddr');
+	}
 	elsif ( ($address =~ m/^t[1,3]/) && length($address) == 35) {
+		return('taddr');
+	}
+	elsif ( ($address =~ m/^tm/) && length($address) == 35) {			# testnet ZEC
 		return('taddr');
 	}
 	elsif ( ($address =~ m/^ys1/) && length($address) == 78) {

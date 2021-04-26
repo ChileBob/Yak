@@ -22,9 +22,10 @@ my $config = {																# DEFAULT CONFIGURATION
 	poolport => 3333,														# mining pool port number
 	poolfee => 0.25,														# pool fee (percentage)
 	timer => 60,															# interval timer
+
 	debug => 5,															# debugging output level
-	librust => 'ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
-	viewkeyfee => 1000,														# viewkey monitoring fee (Yatoshis per block)
+#	librust => 'ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
+#	viewkeyfee => 1000,														# viewkey monitoring fee (Yatoshis per block)
 };
 
 #########################################################################################################################################################################

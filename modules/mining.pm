@@ -172,6 +172,11 @@ sub addr_to_script {
 
 	my ($address) = @_;										# payment address
 
+	if ($address =~ m/^.m/) {									# testnet addresses, get script from the node
+		my $info = common::node_cli('validateaddress', $address, '');
+		return($info->{'scriptPubKey'});
+	}
+
 	my $payhash = unpack("H*", substr(decode_base58check($address),2));				# raw script
 
 	if ( $address =~ m/^.1/) {									# pay to t1/s1
