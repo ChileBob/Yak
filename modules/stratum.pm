@@ -13,7 +13,7 @@ my $debug = 0;																# debug verbosity for this package
 
 our $pool_listen;
 our $pool_select;
-our $pool_target = '007ffff000000000000000000000000000000000000000000000000000000000';
+our $pool_target = '00fffff000000000000000000000000000000000000000000000000000000000';
 
 our $MINER_DISCONNECT  = 0x00;		# - disconnected
 
@@ -121,18 +121,22 @@ sub new_work {
 					{ address => $poolfee_address, percent => $poolfee_percent}
 				]);
 	
-				my @tx_id = mining::hash_this($miner->{$id}->{'work'}->{'tx_data'});						# coinbase txid
+				my @tx_id = mining::hash_this($miner->{$id}->{'work'}->{'tx_data'});					# coinbase txid
 	
+				my $txn_count = 1;
 				foreach my $tx ( @{$template->{'transactions'}} ) {							# add remaining transactions
 					push @tx_id, $tx->{'hash'};
-					$miner->{$id}->{'work'}->{'txdata'} .= $tx->{'data'};
+					$miner->{$id}->{'work'}->{'tx_data'} .= $tx->{'data'};
+					$txn_count++;
 				}
-	
-#				$miner->{$id}->{'work'}->{'target'} = $template->{'target'};						# mining difficulty target
+
+				$miner->{$id}->{'work'}->{'tx_data'} = mining::hexCompactSize($txn_count) . $miner->{$id}->{'work'}->{'tx_data'};	# prefix transaction data with txn count
+
+#				$miner->{$id}->{'work'}->{'target'} = $template->{'target'};							# mining difficulty target
 				$miner->{$id}->{'work'}->{'target'} = $pool_target;
 	
 				$miner->{$id}->{'work'}->{'version'}    	  = unpack("H*", pack("L", $template->{'version'}));		# version    (little-endian)
-				$miner->{$id}->{'work'}->{'merkleroot'} 	  = mining::merkleroot(\@tx_id);				# merkleroot (little-endian)
+				$miner->{$id}->{'work'}->{'merkleroot'} 	  = mining::reverse_bytes(mining::merkleroot(\@tx_id));		# merkleroot (little-endian)
 				$miner->{$id}->{'work'}->{'previousblockhash'} 	  = mining::reverse_bytes($template->{'previousblockhash'});	# previousblockhash (little-endian)
 				$miner->{$id}->{'work'}->{'finalsaplingroothash'} = mining::reverse_bytes($template->{'finalsaplingroothash'});	# finalsaplingroothash (little-endian)
 				$miner->{$id}->{'work'}->{'time'} 		  = unpack("H*", pack("L", time));				# epoch time (little-endian)
@@ -241,9 +245,13 @@ sub update {
 						$rawblock .= $req->{'params'}[4];
 						$rawblock .= $miner->{$id}->{'work'}->{'tx_data'};
 
+						print "RAWBLOCK: $rawblock\n";
+
 						# TODO: Check solution & difficulty, if both tests pass the block can be submitted & we can play with lower targets
 						
-						my $resp = `$main::node_client submitblock $rawblock 2>/dev/null`;				# submit the block
+						my $resp = `$main::node_client submitblock $rawblock 2>&1`;					# submit the block
+
+						print "node said: $resp\n";
 
 						my $eval = eval { decode_json($resp) };
 

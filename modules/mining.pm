@@ -172,9 +172,9 @@ sub addr_to_script {
 
 	my ($address) = @_;										# payment address
 
-	if ($address =~ m/^.m/) {									# testnet addresses, get script from the node
+	if ($address =~ m/^.m/) {									# testnet addresses, get script from the node (slow)
 		my $info = common::node_cli('validateaddress', $address, '');
-		return($info->{'scriptPubKey'});
+		return('19' . $info->{'scriptPubKey'});							# return prefixed with compactSize
 	}
 
 	my $payhash = unpack("H*", substr(decode_base58check($address),2));				# raw script
