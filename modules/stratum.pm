@@ -13,7 +13,7 @@ my $debug = 0;															# debug verbosity for this package
 
 our $pool_listen;
 our $pool_select;
-our $pool_target = '00fffff000000000000000000000000000000000000000000000000000000000';						# pool target, all miners get the same
+our $pool_target = '007ffff000000000000000000000000000000000000000000000000000000000';						# pool target, all miners get the same
 
 our $MINER_DISCONNECT  = 0x00;		# - disconnected
 
@@ -265,15 +265,17 @@ sub update {
 							
 							my $share_hash = unpack("H*", sha256(sha256(pack("H*", $solution)))); 						# prevent duplicate shares
 							if (grep(/$share_hash/, @share_hashes)) {		
-								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_DISCONNECT);			# kill naughty miners
+
+								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);				# kill naughty miners
+
 							}
 							else {
 								push @share_hashes, $share_hash;									# store this solution hash
 	
-																				# calculate difficulty
-								my $diff = mining::verify_difficulty($header, $nonce, $solution, $miner->{$id}->{'work'}->{'bits'}, $pool_target);
+								my $diff = mining::verify_difficulty($header, $nonce, $solution, $miner->{$id}->{'work'}->{'bits'}, $pool_target);	# get difficulty
 								
-								if ($diff == 1) {											# possible share
+								if ($diff == 1) {											# possible share !!
+
 									if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
 										$miner_share->{$miner->{$id}->{'address'}}++;						# add to shares
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
@@ -282,7 +284,9 @@ sub update {
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
 									}
 								}
+
 								elsif ($diff == 2) {											# possible block !!!
+
 									if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
 		
 										my $rawblock = $header . $nonce . $solution . $miner->{$id}->{'work'}->{'tx_data'};		# add transaction data
@@ -316,7 +320,9 @@ sub update {
 										}
 									}
 								}
-								else {	# miner sent us garbage, there should be consequenses
+								else {	# bad share, not difficult enough
+
+									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
 								}
 							}
 						}
@@ -422,7 +428,6 @@ sub miner_disconnect {
 # Send to mining client & update status
 #
 sub miner_write {
-
 
 	my ($fh, $json, $state) = @_;
 
