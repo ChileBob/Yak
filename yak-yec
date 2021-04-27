@@ -19,10 +19,10 @@ my $config = {																# DEFAULT CONFIGURATION
 	client_type => 'yak-yec',													# client type
 	client_key  => 'changethiskey',													# client encryption key, to send notifications
 	web => 'ws://127.0.0.1:8834',													# websocket server
-	poolport => 3333,														# mining pool port number
-	poolfee => 0.25,														# pool fee (percentage)
+	pool_port => 3333,														# mining pool port number
+	pool_fee => 0.5,														# pool fee (percentage)
+	pool_yaddr => "ytestsapling1pqlrun77kwls9ckr9w02jcu7v57afqjdv30w2fd0ljvt0n9nh90h2hjh9grpktlmm0sj7hw5z05",			# pool shielded address
 	timer => 60,															# interval timer
-
 	debug => 5,															# debugging output level
 #	librust => 'ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
 #	viewkeyfee => 1000,														# viewkey monitoring fee (Yatoshis per block)
@@ -107,8 +107,8 @@ if ($node_config->{'mineraddress'}) {													# we're configured for mining
 		exit(1);
 	}
 
-	common::debug(0, "\nMINING POOL ENABLED :-\n\n- Pool Addr : $node_config->{'mineraddress'}\n- Pool Port : $config->{'poolport'}\n- Pool Fee  : $config->{'poolfee'}\%\n- Dev Fee   : $stratum::devfee_percent\%");
-	stratum::start($config->{'poolport'}, $node_config->{'mineraddress'}, $config->{'poolfee'});					# open listening port
+	common::debug(0, "\nMINING POOL ENABLED :-\n\n- Pool Addr : $node_config->{'mineraddress'}\n- Pool Port : $config->{'pool_port'}\n- Dev Fee   : $stratum::devfee_percent\%");
+	stratum::start($config->{'pool_port'}, $node_config->{'mineraddress'}, $config->{'pool_fee'});					# open listening port
 	$running = 1;
 }
 
@@ -359,7 +359,8 @@ while ($running >= 0) {
 	
 						@viewkey = common::xfvk_active($block->{'height'});					# check viewkeys for expiry
 
-						stratum::new_work();									# put miners to work 
+						stratum::new_block();									# spool miner shares
+						stratum::new_work();									# generate new work for miners
 					}
 				}
 				stratum::update();											# process miner requests

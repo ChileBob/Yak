@@ -22,16 +22,20 @@ my $debug = 5;						# global debug verbosity, 0 = quiet
 #
 sub verify_difficulty {
 
-	my ($header, $nonce, $solution, $nbits) = @_;							# hex-encoded strings, endian-ness as per block header
+	my ($header, $nonce, $solution, $nbits, $miner_target) = @_;					# hex-encoded strings, endian-ness as per block header
 
-	my $target = nbits_to_target($nbits);								# convert nbits to 256-bit target
-	$target =~ s/0*$//;										# strip training zeros
+	my $block_target = nbits_to_target($nbits);							# convert nbits to 256-bit target (little-endian)
+	$block_target =~ s/0*$//;									# strip trailing zeros from block target (little-endian)
+
+	$miner_target =~ s/0*$//;									# strip trailing zeros from miner target (little-endian)
 
 	my $diff = unpack("H*", reverse sha256(sha256(pack("H*", $header . $nonce . $solution)))); 	# get hex-encoded double-sha256 of the block header
-	$diff = substr($diff, 0, length($target));							# cut to length of significant target bytes
 
-	if (hex($diff) < hex($target) ) {								# difficulty must be less or equal to target
-		return(1);		
+	if ( hex( reverse_bytes(substr($diff, 0, length($block_target)))) <= hex(reverse_bytes($block_target)) ) {	# WE FOUND A BLOCK !!!!!
+		return(2);
+	}
+	elsif ( hex( reverse_bytes(substr($diff, 0, length($miner_target)))) <= hex(reverse_bytes($miner_target)) ) {	# solution better than miner target !
+		return(1);
 	}
 }
 
@@ -133,10 +137,11 @@ sub nbits_to_target {
 
 	my ($nbits) = @_;										# hex-encoded nBits
 
-	my $target = substr($nbits,2,6);								# most significant bits
+	my $target = reverse_bytes(substr($nbits,0,6));							# target bits
 
-	my $exp = hex(substr($nbits,0,2)) - 3;								# exponent
-	while ($exp > 0) {								 
+	my $exp = hex(substr($nbits,6,2));								# exponent
+
+	while ($exp > 3) {								 
 		$target .= '00';
 		$exp--;
 	}

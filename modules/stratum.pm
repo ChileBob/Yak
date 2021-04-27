@@ -9,11 +9,11 @@
 
 package stratum;
 
-my $debug = 0;																# debug verbosity for this package
+my $debug = 0;															# debug verbosity for this package
 
 our $pool_listen;
 our $pool_select;
-our $pool_target = '00fffff000000000000000000000000000000000000000000000000000000000';
+our $pool_target = '00fffff000000000000000000000000000000000000000000000000000000000';						# pool target, all miners get the same
 
 our $MINER_DISCONNECT  = 0x00;		# - disconnected
 
@@ -41,23 +41,31 @@ use IO::Handle;															# socket handlers for mining
 use IO::Socket;
 use IO::Select;
 
-my $devfee_address  = 'smN4pgFNjLmCMrawa9nqqb7MxYsg9w48Ln1';									# testnet devfee address
+use File::Path qw(make_path);													# create spool directories
+use YAML qw(DumpFile);														# write miner shares to spool directory
+use Digest::SHA qw(sha256);													# hash miner solutions to prevent duplicates
+
+my $devfee_address  = 'smN4pgFNjLmCMrawa9nqqb7MxYsg9w48Ln1';									# ycash testnet devfee address
 # my $devfee_address  = 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP';									# ChileBob spends this on wine, women & song
+our $devfee_percent = 0.5;													# .....not much on song! :-)
 
-our $devfee_percent = 0.25;													# .....not much on song! :-)
+my $pool_percent     = 0;													# default pool fee is zero, set by stratum::init()
+my $pool_transparent = '';													# transparent address we mine to
+my $pool_spool;															# spool dir for mining shares
 
-my $poolfee_address = '';													# pool address, overwritted from main config & command line
-my $poolfee_percent = 0.25;													# Default pool fee
+my $template;
 
 my $miner;															# miner (config/state)
 my $miner_conn;															# miner (connection hash)
+
+my $miner_share;														# miner shares for the current block
+my @share_hashes;														# hash of shares (prevent duplicates)
 
 my $miner_idx = 1;														# miner client counter
 
 my $running = 0;														# runtime flag
 
 my $timer_interval = 15;													# timer reset (seconds), refresh miner tasks
-
 my $timer_timeout = 60;														# timeout (seconds), clients inactive for this long are disconnected
 
 #######################################################################################################################################
@@ -70,8 +78,8 @@ sub start {
 
 	if ($address && $port) {
 
-		$poolfee_address = $address;											# pool params 
-		$poolfee_percent = 0 + $fee;											
+		$pool_transparent = $address;											# pool params 
+		$pool_percent = 0 + $fee;											
 	
 		$pool_listen = IO::Socket::INET->new (										# open listening socket
 			LocalPort => $port,
@@ -81,14 +89,33 @@ sub start {
 			Blocking => 0												# non-blocking socket
 		);
 	
-		$pool_select = IO::Select->new($pool_listen);								# port select handler
+		$pool_select = IO::Select->new($pool_listen);									# port select handler
+
+		clear_shares();
+		@share_id = ();
 	
 		$running = 1;													# set runtime flag
+
+		make_path("$main::install/spool/unpaid/$pool_transparent");							# create spool dir for share records
 	}
 	else {
 		common::debug(0,"Failed to start stratum pool.");
 		exit(1);
 	}
+}
+
+#######################################################################################################################################
+#
+# things to do when a new block starts
+#
+sub new_block {
+
+	DumpFile("$main::install/spool/unpaid/$pool_transparent/$template->{'height'}", $miner_share);					# write miner shares to spool dir
+
+	clear_shares();
+	@share_id = ();
+
+	new_work();															# new work for all miners
 }
 
 #######################################################################################################################################
@@ -109,16 +136,15 @@ sub new_work {
 
 	if ($running) {															# only if pool is ready to mine
 
-		my $template = common::node_cli('getblocktemplate', '', '');
+		$template = common::node_cli('getblocktemplate', '', '');								# refresh the block template
 
 		foreach my $id (@miner_id) {
 
 			if ($miner->{$id}->{'state'} >= $MINER_AUTHORIZED) {								# only for miners that are ready to work
 
-				$miner->{$id}->{'work'}->{'tx_data'} = mining::make_coinbase($template, [ 				# coinbase transaction
-					{ address => $miner->{$id}->{'address'}},
-					{ address => $devfee_address, percent => $devfee_percent},
-					{ address => $poolfee_address, percent => $poolfee_percent}
+				$miner->{$id}->{'work'}->{'tx_data'} = mining::make_coinbase($template, [ 				# generate coinbase transaction
+					{ address => $devfee_address, percent => $devfee_percent},					# - devfee mined in coinbase
+					{ address => $pool_transparent }								# - balance to pool transparent address
 				]);
 	
 				my @tx_id = mining::hash_this($miner->{$id}->{'work'}->{'tx_data'});					# coinbase txid
@@ -132,8 +158,7 @@ sub new_work {
 
 				$miner->{$id}->{'work'}->{'tx_data'} = mining::hexCompactSize($txn_count) . $miner->{$id}->{'work'}->{'tx_data'};	# prefix transaction data with txn count
 
-#				$miner->{$id}->{'work'}->{'target'} = $template->{'target'};							# mining difficulty target
-				$miner->{$id}->{'work'}->{'target'} = $pool_target;
+				$miner->{$id}->{'work'}->{'target'} = $pool_target;								# fixed pool target
 	
 				$miner->{$id}->{'work'}->{'version'}    	  = unpack("H*", pack("L", $template->{'version'}));		# version    (little-endian)
 				$miner->{$id}->{'work'}->{'merkleroot'} 	  = mining::reverse_bytes(mining::merkleroot(\@tx_id));		# merkleroot (little-endian)
@@ -145,7 +170,7 @@ sub new_work {
 				$miner->{$id}->{'work'}->{'jobnumber'}++;									# increment job number
 				$miner->{$id}->{'work'}->{'shares'} = 0;									# clear share counter
 	
-				if ( $miner->{$id}->{'state'} > $MINER_IDLE ) { 	# tag miner as idle
+				if ( $miner->{$id}->{'state'} > $MINER_IDLE ) { 						# tag miner as idle
 					$miner->{$id}->{'state'} = $MINER_IDLE;	
 				}
 			}
@@ -235,45 +260,74 @@ sub update {
 	
 						print "PARSING : mining.submit\n";
 
-						my $rawblock = $miner->{$id}->{'work'}->{'version'};
-						$rawblock .= $miner->{$id}->{'work'}->{'previousblockhash'};
-						$rawblock .= $miner->{$id}->{'work'}->{'merkleroot'};
-						$rawblock .= $miner->{$id}->{'work'}->{'finalsaplingroothash'};
-						$rawblock .= $req->{'params'}[2];
-						$rawblock .= $miner->{$id}->{'work'}->{'bits'};
-						$rawblock .= "$miner->{$id}->{'nonce1'}$req->{'params'}[3]";
-						$rawblock .= $req->{'params'}[4];
-						$rawblock .= $miner->{$id}->{'work'}->{'tx_data'};
+						my $header = $miner->{$id}->{'work'}->{'version'};				# block header
+						$header .= $miner->{$id}->{'work'}->{'previousblockhash'};
+						$header .= $miner->{$id}->{'work'}->{'merkleroot'};
+						$header .= $miner->{$id}->{'work'}->{'finalsaplingroothash'};
+						$header .= $req->{'params'}[2];
+						$header .= $miner->{$id}->{'work'}->{'bits'};
 
-						print "RAWBLOCK: $rawblock\n";
+						my $nonce    = "$miner->{$id}->{'nonce1'}$req->{'params'}[3]";			# nonce
+						my $solution = $req->{'params'}[4];						# solution
 
-						# TODO: Check solution & difficulty, if both tests pass the block can be submitted & we can play with lower targets
 						
-						my $resp = `$main::node_client submitblock $rawblock 2>&1`;					# submit the block
-
-						print "node said: $resp\n";
-
-						my $eval = eval { decode_json($resp) };
-
-						if ($@) {											# non-json response
-
-							if ($resp eq '') {									# accepted !
-								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
-								new_work();
-							}
-							else {											# rejected !
-								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
-							}
+						my $share_hash = unpack("H*", sha256(sha256(pack("H*", $solution)))); 						# prevent duplicate shares
+						if (grep(/$share_hash/, @share_hashes)) {		
+							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_DISCONNECT);			# kill naughty miners
 						}
-						else {												# json response
-							my $response = decode_json($resp);	
+						else {
+							push @share_hashes, $share_hash;									# store this solution hash
 
-							if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# accepted
-								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
-								new_work();
+																				# calculate difficulty
+							my $diff = mining::verify_difficulty($header, $nonce, $solution, $miner->{$id}->{'work'}->{'bits'}, $pool_target);
+							
+							if ($diff == 1) {											# possible share
+								if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
+									$miner_share->{$miner->{$id}->{'address'}}++;						# add to shares
+									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
+								}
+								else {												# bad solution, reject share
+									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
+								}
 							}
-							else {											# rejected
-								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+							elsif ($diff == 2) {											# possible block !!!
+								if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
+	
+									my $rawblock = $header . $nonce . $solution . $miner->{$id}->{'work'}->{'tx_data'};		# add transaction data
+							
+									my $resp = `$main::node_client submitblock $rawblock 2>&1`;					# submit the block
+				
+									print "node said: $resp\n";
+		
+									my $eval = eval { decode_json($resp) };
+			
+									if ($@) {											# non-json response
+				
+										if ($resp eq '') {									# block accepted !
+											$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
+											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+											new_work();
+										}
+										else {											# block rejected !
+											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+										}
+									}
+									else {												# json response (happens sometimes)
+										my $response = decode_json($resp);	
+			
+										if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
+											$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
+											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+											new_work();
+										}
+										else {											# block rejected
+											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+										}
+									}
+								}
+							}
+							else {	# miner sent us garbage, there should be consequenses
+								print "Invalid share !\n";
 							}
 						}
 					}
@@ -389,6 +443,18 @@ sub miner_write {
 	$miner->{$id}->{'updated'} = time;											# update timestamp
 
 	$miner->{$id}->{'state'} = $state;											# set miner state
+}
+
+
+#######################################################################################################################################
+#
+# Clear all shares from hash, 
+#
+sub clear_shares {
+
+	for my $key (keys %$miner_share) {
+		delete ($miner_share->{$key});
+	}
 }
 
 

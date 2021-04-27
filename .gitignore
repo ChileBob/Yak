@@ -1,4 +1,5 @@
 libs/*
+spool/*
 archive
 rust/zcash/target
 rust/ycash/target
