@@ -45,8 +45,7 @@ use File::Path qw(make_path);													# create spool directories
 use YAML qw(DumpFile);														# write miner shares to spool directory
 use Digest::SHA qw(sha256);													# hash miner solutions to prevent duplicates
 
-my $devfee_address  = 'smN4pgFNjLmCMrawa9nqqb7MxYsg9w48Ln1';									# ycash testnet devfee address
-# my $devfee_address  = 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP';									# ChileBob spends this on wine, women & song
+my $devfee_address  = 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP';									# ChileBob spends this on wine, women & song
 our $devfee_percent = 0.5;													# .....not much on song! :-)
 
 my $pool_percent     = 0;													# default pool fee is zero, set by stratum::init()
