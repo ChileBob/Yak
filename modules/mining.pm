@@ -160,8 +160,6 @@ sub txn_out {
 
 	my ($address, $zats) = @_;									# payment address, amount in zats
 
-	print "txn_out() : $address, $zats\n";
-
 	my $amount = unpack("H*", reverse pack("H*", sprintf("%016X", $zats)));				# 8-bytes, little-endian
 
 	my $script = addr_to_script($address);								# raw script

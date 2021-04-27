@@ -85,7 +85,7 @@ sub start {
 			LocalPort => $port,
 			Proto => 'tcp',
 			Listen => SOMAXCONN,											# limit is approx 32k sockets, so plenty
-			reuse => 1,
+			Reuse => 1,
 			Blocking => 0												# non-blocking socket
 		);
 	
@@ -218,120 +218,113 @@ sub update {
 	
 					my $buf = <$fh>;									# read socket
 
-					print "$buf\n";
+					if ($buf) {
 
-
-					my $req = common::read_json($buf);							# miner request
-	
-					if ($req->{'method'} eq 'mining.subscribe') {						# client connects to stratum
-	
-						print "PARSING : mining.subscribe\n";
-
-						$miner->{$id}->{'software'} = $req->{'params'}[0];				# log mining software
-
-						$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);				# random nonce1 (16 hex-chars, 8-bytes)
-	
-						miner_write($fh, "\{\"id\":$req->{'id'},\"result\":\[null,\"$miner->{$id}->{'nonce1'}\"\],\"error\":null\}\n", $MINER_SUBSCRIBED);
-					}
-	
-					elsif ($req->{'method'} eq 'mining.authorize') {					# username/password 
-	
-						print "PARSING : mining.authorize\n";
-
-						if (common::addr_type($req->{'params'}[0]) eq 'saddr') {			# client username, payment address & MUST be a saddr
-							$miner->{$id}->{'address'} = $req->{'params'}[0];
-							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $MINER_IDLE); 
-
-							new_work($id);								# give the new miner something to do	
-						}
-						else {
-							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Auth Failed\"}\n", $MINER_DISCONNECT);
-						}
-					}
-	
-					elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {
-
-						print "PARSING : mining.extranonce.subscribe\n";
-
-						miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $MINER_IDLE);
-					}
-	
-					elsif ($req->{'method'} eq 'mining.submit') {						# client submits a share !
-	
-						print "PARSING : mining.submit\n";
-
-						my $header = $miner->{$id}->{'work'}->{'version'};				# block header
-						$header .= $miner->{$id}->{'work'}->{'previousblockhash'};
-						$header .= $miner->{$id}->{'work'}->{'merkleroot'};
-						$header .= $miner->{$id}->{'work'}->{'finalsaplingroothash'};
-						$header .= $req->{'params'}[2];
-						$header .= $miner->{$id}->{'work'}->{'bits'};
-
-						my $nonce    = "$miner->{$id}->{'nonce1'}$req->{'params'}[3]";			# nonce
-						my $solution = $req->{'params'}[4];						# solution
-
-						
-						my $share_hash = unpack("H*", sha256(sha256(pack("H*", $solution)))); 						# prevent duplicate shares
-						if (grep(/$share_hash/, @share_hashes)) {		
-							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_DISCONNECT);			# kill naughty miners
-						}
-						else {
-							push @share_hashes, $share_hash;									# store this solution hash
-
-																				# calculate difficulty
-							my $diff = mining::verify_difficulty($header, $nonce, $solution, $miner->{$id}->{'work'}->{'bits'}, $pool_target);
-							
-							if ($diff == 1) {											# possible share
-								if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
-									$miner_share->{$miner->{$id}->{'address'}}++;						# add to shares
-									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
-								}
-								else {												# bad solution, reject share
-									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
-								}
-							}
-							elsif ($diff == 2) {											# possible block !!!
-								if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
-	
-									my $rawblock = $header . $nonce . $solution . $miner->{$id}->{'work'}->{'tx_data'};		# add transaction data
-							
-									my $resp = `$main::node_client submitblock $rawblock 2>&1`;					# submit the block
-				
-									print "node said: $resp\n";
+						my $req = common::read_json($buf);							# miner request
 		
-									my $eval = eval { decode_json($resp) };
-			
-									if ($@) {											# non-json response
-				
-										if ($resp eq '') {									# block accepted !
-											$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
-											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
-											new_work();
-										}
-										else {											# block rejected !
-											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
-										}
+						if ($req->{'method'} eq 'mining.subscribe') {						# client connects to stratum
+		
+							$miner->{$id}->{'software'} = $req->{'params'}[0];				# log mining software
+	
+							$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);				# random nonce1 (16 hex-chars, 8-bytes)
+		
+							miner_write($fh, "\{\"id\":$req->{'id'},\"result\":\[null,\"$miner->{$id}->{'nonce1'}\"\],\"error\":null\}\n", $MINER_SUBSCRIBED);
+						}
+		
+						elsif ($req->{'method'} eq 'mining.authorize') {					# username/password 
+		
+							if ( common::addr_type($req->{'params'}[0]) ) {					# client username, payment address can be any ycash/zcash type
+	
+								$miner->{$id}->{'address'} = $req->{'params'}[0];
+								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $MINER_IDLE); 
+	
+								new_work($id);								# give the new miner something to do	
+							}
+							else {
+								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Auth Failed\"}\n", $MINER_DISCONNECT);
+							}
+						}
+		
+						elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {
+	
+							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $MINER_IDLE);
+						}
+		
+						elsif ($req->{'method'} eq 'mining.submit') {						# client submits a share !
+		
+							my $header = $miner->{$id}->{'work'}->{'version'};				# block header
+							$header .= $miner->{$id}->{'work'}->{'previousblockhash'};
+							$header .= $miner->{$id}->{'work'}->{'merkleroot'};
+							$header .= $miner->{$id}->{'work'}->{'finalsaplingroothash'};
+							$header .= $req->{'params'}[2];
+							$header .= $miner->{$id}->{'work'}->{'bits'};
+	
+							my $nonce    = "$miner->{$id}->{'nonce1'}$req->{'params'}[3]";			# nonce
+							my $solution = $req->{'params'}[4];						# solution
+	
+							
+							my $share_hash = unpack("H*", sha256(sha256(pack("H*", $solution)))); 						# prevent duplicate shares
+							if (grep(/$share_hash/, @share_hashes)) {		
+								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_DISCONNECT);			# kill naughty miners
+							}
+							else {
+								push @share_hashes, $share_hash;									# store this solution hash
+	
+																				# calculate difficulty
+								my $diff = mining::verify_difficulty($header, $nonce, $solution, $miner->{$id}->{'work'}->{'bits'}, $pool_target);
+								
+								if ($diff == 1) {											# possible share
+									if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
+										$miner_share->{$miner->{$id}->{'address'}}++;						# add to shares
+										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 									}
-									else {												# json response (happens sometimes)
-										my $response = decode_json($resp);	
-			
-										if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
-											$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
-											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
-											new_work();
+									else {												# bad solution, reject share
+										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
+									}
+								}
+								elsif ($diff == 2) {											# possible block !!!
+									if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
+		
+										my $rawblock = $header . $nonce . $solution . $miner->{$id}->{'work'}->{'tx_data'};		# add transaction data
+								
+										my $resp = `$main::node_client submitblock $rawblock 2>&1`;					# submit the block
+					
+										my $eval = eval { decode_json($resp) };
+				
+										if ($@) {											# non-json response
+					
+											if ($resp eq '') {									# block accepted !
+												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+												new_work();
+											}
+											else {											# block rejected !
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+											}
 										}
-										else {											# block rejected
-											miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+										else {												# json response (happens sometimes)
+											my $response = decode_json($resp);	
+				
+											if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
+												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+												new_work();
+											}
+											else {											# block rejected
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+											}
 										}
 									}
 								}
-							}
-							else {	# miner sent us garbage, there should be consequenses
-								print "Invalid share !\n";
+								else {	# miner sent us garbage, there should be consequenses
+								}
 							}
 						}
+						else {											# weird request, disconnect miner
+							miner_disconnect($fh);
+						}
 					}
-					else {											# weird request, disconnect miner
+					else {
 						miner_disconnect($fh);
 					}
 				}
@@ -348,9 +341,7 @@ sub update {
 
 				if ( (time - $miner->{$id}->{'updated'}) > $timer_timeout) {					# timed out
 
-					$miner->{$id}->{'state'} = $MINER_DISCONNECTED;
-
-					print "miner $id timed out!\n";
+					$miner->{$id}->{'state'} = $MINER_DISCONNECT;
 				}
 				
 				if ($miner->{$id}->{'state'} == $MINER_TARGETTED) {						# has target, send new work
@@ -378,8 +369,7 @@ sub update {
 					}
 				}
 
-				elsif ($miner->{$id}->{'state'} == $MINER_DISCONNECTED) {					# disconnect
-					print "disconnecting miner $id\n";
+				elsif ($miner->{$id}->{'state'} == $MINER_DISCONNECT) {						# disconnect
 					miner_disconnect($fh);
 				}
 			}
@@ -416,12 +406,14 @@ sub miner_disconnect {
 
 	my ($fh) = @_;
 
+	my $id = $miner_conn->{$fh->fileno};							# get index number from connection hash
+	
 	$pool_select->remove($fh);											# remove from select
 	
 	delete ($miner_conn->{$fh});
-	delete ($miner->{$miner->{$fh->fileno}});										# get index number from connection hash
+	delete ($miner->{$id} );											# get index number from connection hash
 
-	#	$fh->shutdown(2);													# close the socket
+	$fh->shutdown(2);												# close the socket
 }
 
 
@@ -433,8 +425,6 @@ sub miner_write {
 
 
 	my ($fh, $json, $state) = @_;
-
-	print "$json\n";
 
 	my $id = $miner_conn->{$fh->fileno};						# add miners id number to hash of connections
 

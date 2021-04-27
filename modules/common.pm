@@ -151,22 +151,22 @@ sub addr_type {
 
 	my ($address) = @_;
 
-	if ( ($address =~ m/^s[1,3]/) && length($address) == 35) {
+	if ( (($address =~ m/^s[1,3]/) || ($address =~ m/^sm/)) && length($address) == 35) {	# ycash transparent, main/test
 		return('saddr');
 	}
-	if ( ($address =~ m/^sm/) && length($address) == 35) {				# testnet YEC
-		return('saddr');
-	}
-	elsif ( ($address =~ m/^t[1,3]/) && length($address) == 35) {
+	elsif ( (($address =~ m/^t[1,3]/) || ($address =~ m/^tm/)) && length($address) == 35) {	# zcash transparent, main/test
 		return('taddr');
 	}
-	elsif ( ($address =~ m/^tm/) && length($address) == 35) {			# testnet ZEC
-		return('taddr');
-	}
-	elsif ( ($address =~ m/^ys1/) && length($address) == 78) {
+	elsif ( ($address =~ m/^ytestsapling/) && length($address) == 88) {			# ycash shielded test
 		return('yaddr');
 	}
-	elsif ( ($address =~ m/^zs1/) && length($address) == 78) {
+	elsif ( ($address =~ m/^ys1/) && length($address) == 78) {				# ycash shielded main
+		return('yaddr');
+	}
+	elsif ( ($address =~ m/^ztestsapling/) && length($address) == 88) {			# zcash shielded testnet
+		return('zaddr');
+	}
+	elsif ( ($address =~ m/^zs1/) && length($address) == 78) {				# zcash shielded mainnetnetnetnet
 		return('zaddr');
 	}
 }
