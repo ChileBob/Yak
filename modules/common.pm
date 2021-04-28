@@ -151,17 +151,23 @@ sub addr_type {
 
 	my ($address) = @_;
 
-	if ( ($address =~ m/^s[1,3]/) && length($address) == 35) {
-		return('saddr');
+	if ( ($address =~ m/^s[1,m]/) || ($address =~ m/^t[1,2,3]/) ) {			# transparent (mainnet/testnet, ycash/zcash)
+
+		my $info = node_cli('validateaddress', $address, '');
+
+		if ($info->{'isvalid'}) {
+			return('transparent');
+		}
 	}
-	elsif ( ($address =~ m/^t[1,3]/) && length($address) == 35) {
-		return('taddr');
-	}
-	elsif ( ($address =~ m/^ys1/) && length($address) == 78) {
-		return('yaddr');
-	}
-	elsif ( ($address =~ m/^zs1/) && length($address) == 78) {
-		return('zaddr');
+											# shielded (mainnet/testnet, ycash/zcash)
+											
+	elsif ( ($address =~ m/^ytestsapling/) || ($address =~ m/^ys1/) || ($address =~ m/^ztestsapling/) || ($address =~ m/^zs1/) ) {
+
+		my $info = node_cli('z_validateaddress', $address, '');
+
+		if ($info->{'isvalid'}) {
+			return('shielded');
+		}
 	}
 }
 

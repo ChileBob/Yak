@@ -10,11 +10,12 @@
 package mining;
 
 use Data::Dumper;
-use Bitcoin::Crypto::Base58 qw(:all);
 use Digest::SHA qw(sha256);
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
 
+
+my $cache_addr_to_script;										# cache payscript so we dont have to keep bothering the node
 
 #########################################################################################################################################################################
 #
@@ -22,16 +23,16 @@ my $debug = 5;						# global debug verbosity, 0 = quiet
 #
 sub verify_difficulty {
 
-	my ($header, $nonce, $solution, $nbits) = @_;							# hex-encoded strings, endian-ness as per block header
+	my ($header, $nonce, $solution, $nbits, $miner_target) = @_;					# hex-encoded strings, endian-ness as per block header
 
-	my $target = nbits_to_target($nbits);								# convert nbits to 256-bit target
-	$target =~ s/0*$//;										# strip training zeros
+	my $block_hash = unpack("H*", reverse sha256(sha256(pack("H*", $header . $nonce . $solution)))); 	# double-sha256 (256-bit big-endian)
 
-	my $diff = unpack("H*", reverse sha256(sha256(pack("H*", $header . $nonce . $solution)))); 	# get hex-encoded double-sha256 of the block header
-	$diff = substr($diff, 0, length($target));							# cut to length of significant target bytes
+	if (compare_target($block_hash, nbits_to_target($nbits))) {					# BLOCK !
+		return(2);
+	}
 
-	if (hex($diff) < hex($target) ) {								# difficulty must be less or equal to target
-		return(1);		
+	elsif (compare_target($block_hash, $miner_target)) {						# SHARE !
+		return(1);
 	}
 }
 
@@ -42,7 +43,7 @@ sub verify_difficulty {
 sub verify_equihash {
 
 	my ($header, $nonce, $solution, $N, $K) = @_;							# hex-encoded strings, endian-ness as per block header, equihash N & K integers
-													#
+	
 	my $bpi = ($N / ($K + 1)) + 1;									# bits per index	200/9 = 21       192/7 = 25
 	my $indexes = 2**$K;										# number of indexes	200/9 = 512      192/7 = 128
 	my $hashlen = $N / 4;										# blake2b hash length	200/9 = 50       192/7 = 48
@@ -54,7 +55,7 @@ sub verify_equihash {
 
 	$header   = pack("H*", $header);								# convert args to binary
 	$nonce    = pack("H*", $nonce);
-	$solution = pack("H*", substr($solution, 6));
+	$solution = pack("H*", substr($solution, 6));							# remove the compact size prefix from solution
 
 	my @sol = map { oct "0b$_" } unpack "(a$bpi)*", unpack 'B*', $solution;				# extract indexes from solution
 	@sol == $indexes or return(0);
@@ -133,15 +134,16 @@ sub nbits_to_target {
 
 	my ($nbits) = @_;										# hex-encoded nBits
 
-	my $target = substr($nbits,2,6);								# most significant bits
+	my $target = substr($nbits,2,6);								# target bits
 
-	my $exp = hex(substr($nbits,0,2)) - 3;								# exponent
+	my $exp = (hex(substr($nbits, 0, 2)) - 3);								# exponent
+
 	while ($exp > 0) {								 
 		$target .= '00';
 		$exp--;
 	}
-	while (length($target) < 64) {									# leading zeros
-		$target = '00' . $target;
+	while (length($target) < 64) {
+		$target = '0' . $target
 	}
 	return($target);										# return target
 }
@@ -154,8 +156,6 @@ sub nbits_to_target {
 sub txn_out {
 
 	my ($address, $zats) = @_;									# payment address, amount in zats
-
-	print "txn_out() : $address, $zats\n";
 
 	my $amount = unpack("H*", reverse pack("H*", sprintf("%016X", $zats)));				# 8-bytes, little-endian
 
@@ -172,16 +172,37 @@ sub addr_to_script {
 
 	my ($address) = @_;										# payment address
 
-	my $payhash = unpack("H*", substr(decode_base58check($address),2));				# raw script
-
-	if ( $address =~ m/^.1/) {									# pay to t1/s1
-
-		return($payhash = '1976a914' . $payhash . '88ac');
-
+	if ($cache_addr_to_script->{$address}) {							# cache payscript so we dont have to keep bothering the node
+		return($cache_addr_to_script->{$address});							# cache payscript so we dont have to keep bothering the node
 	}
-	elsif ( $address =~ m/^.3/) {									# pay to t3/s3
 
-		return($payhash = 'a914' . $payhash . '87');
+	else {
+
+		my $info = common::node_cli('validateaddress', $address, '');
+	
+	
+		if ( $address =~ m/^s1/) {									# ycash mainnet P2PK
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^s3/) {									# ycash mainnet P2SH
+			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^sm/) {									# ycash testnet P2PK
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t1/) {									# zcash mainnet P2PK
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t3/) {									# zcash mainnet P2SH
+			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t/) {									# zcash testnet P2SH
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t2/) {									# zcash testnet P2SH
+			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+		}
+		return($cache_addr_to_script->{'$address'});
 	}
 }
 
@@ -351,3 +372,26 @@ sub template_to_header {
 	return($header);
 }
 
+
+#########################################################################################################################################################################
+#
+# check hash against target, returns true if the hash is LOWER
+#
+sub compare_target {
+
+	my ($hash, $target) = @_;			# hex-encoded 256-bit unsigned  (which we handle as big endian)
+
+	$hash =~ s/^0*//;				# remove leading zeros
+	$target =~ s/^0*//;				# remove leading zeros
+
+	if (length($hash) < length($target)) {		# if its shorter in length, we found a block
+		return(1);
+	}
+	elsif (length($hash) == length($target)) {		# equal lenth, so compare most significant bytes
+		if ( hex(substr($hash, 0, 6)) <= hex(substr($target, 0, 6)) ) {
+			return(1);
+		}
+	}
+}
+
+1;
