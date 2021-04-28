@@ -24,12 +24,13 @@ sub verify_difficulty {
 
 	my ($header, $nonce, $solution, $nbits, $miner_target) = @_;					# hex-encoded strings, endian-ness as per block header
 
-	my $diff = unpack("H*", reverse sha256(sha256(pack("H*", $header . $nonce . $solution)))); 	# get hex-encoded double-sha256 of the block header
+	my $block_hash = unpack("H*", reverse sha256(sha256(pack("H*", $header . $nonce . $solution)))); 	# double-sha256 (256-bit big-endian)
 
-	if (zero_count($diff) > zero_count(nbits_to_target($nbits))) {
+	if (compare_target($block_hash, nbits_to_target($nbits))) {					# BLOCK !
 		return(2);
 	}
-	if (zero_count($diff) > zero_count($miner_target)) {
+
+	elsif (compare_target($block_hash, $miner_target)) {						# SHARE !
 		return(1);
 	}
 }
@@ -132,16 +133,16 @@ sub nbits_to_target {
 
 	my ($nbits) = @_;										# hex-encoded nBits
 
-	my $target = reverse_bytes(substr($nbits,0,6));							# target bits
+	my $target = substr($nbits,2,6);								# target bits
 
-	my $exp = hex(substr($nbits,6,2));								# exponent
+	my $exp = (hex(substr($nbits, 0, 2)) - 3);								# exponent
 
-	while ($exp > 3) {								 
+	while ($exp > 0) {								 
 		$target .= '00';
 		$exp--;
 	}
-	while (length($target) < 64) {									# leading zeros
-		$target = '00' . $target;
+	while (length($target) < 64) {
+		$target = '0' . $target
 	}
 	return($target);										# return target
 }
@@ -355,25 +356,25 @@ sub template_to_header {
 }
 
 
-
 #########################################################################################################################################################################
 #
-# return count of leading '0' in string, its a measure of difficulty
+# check hash against target, returns true if the hash is LOWER
 #
-sub zero_count {
+sub compare_target {
 
-	my ($string) = @_;
+	my ($hash, $target) = @_;			# hex-encoded 256-bit unsigned  (which we handle as big endian)
 
-	my $count = 0;
-	foreach my $char (split(//, $string)) {
-		if ($char eq '0') {
-			$count++;
-		}
-		else {
-			return($count);
+	$hash =~ s/^0*//;				# remove leading zeros
+	$target =~ s/^0*//;				# remove leading zeros
+
+	if (length($hash) < length($target)) {		# if its shorter in length, we found a block
+		return(1);
+	}
+	elsif (length($hash) == length($target)) {		# equal lenth, so compare most significant bytes
+		if ( hex(substr($hash, 0, 6)) <= hex(substr($target, 0, 6)) ) {
+			return(1);
 		}
 	}
-	return($count);
 }
 
 1;

@@ -15,19 +15,19 @@ our $pool_listen;
 our $pool_select;
 our $pool_target = '007ffff000000000000000000000000000000000000000000000000000000000';						# pool target, all miners get the same
 
-our $MINER_DISCONNECT  = 0x00;		# - disconnected
+our $MINER_DISCONNECT  = 0;		# - disconnected
 
-our $MINER_NEW         = 0x01;		# - new connection
-our $MINER_SUBSCRIBED  = 0x02;		# - subscribed
+our $MINER_NEW         = 1;		# - new connection
+our $MINER_SUBSCRIBED  = 2;		# - subscribed
 
-our $MINER_AUTHORIZED  = 0x03;		# - authenticated
-our $MINER_IDLE        = 0x10;		# - idle
-our $MINER_TARGETED    = 0x11;		# - targetted
-our $MINER_ACTIVE      = 0x12;		# - active (mining)
+our $MINER_AUTHORIZED  = 3;		# - authenticated
+our $MINER_IDLE        = 16;		# - idle
+our $MINER_TARGETTED   = 17;		# - targetted
+our $MINER_ACTIVE      = 18;		# - active (mining)
 
 
-my $MINER_TCP = 0x01;			# direct connection
-my $MINER_WEB = 0x02;			# via websocket
+my $MINER_TCP = 1;			# direct connection
+my $MINER_WEB = 2;			# via websocket
 
 #########################################################################################################################################################################
 #
@@ -64,7 +64,7 @@ my $miner_idx = 1;														# miner client counter
 
 my $running = 0;														# runtime flag
 
-my $timer_interval = 15;													# timer reset (seconds), refresh miner tasks
+my $timer_interval = 30;													# timer reset (seconds), refresh miner tasks
 my $timer_timeout = 60;														# timeout (seconds), clients inactive for this long are disconnected
 
 #######################################################################################################################################
@@ -169,8 +169,8 @@ sub new_work {
 				$miner->{$id}->{'work'}->{'jobnumber'}++;									# increment job number
 				$miner->{$id}->{'work'}->{'shares'} = 0;									# clear share counter
 	
-				if ( $miner->{$id}->{'state'} > $MINER_IDLE ) { 						# tag miner as idle
-					$miner->{$id}->{'state'} = $MINER_IDLE;	
+				if ( $miner->{$id}->{'state'} > $MINER_TARGETTED ) { 						# tag miner as idle
+					$miner->{$id}->{'state'} = $MINER_TARGETTED;	
 				}
 			}
 		}
@@ -216,7 +216,7 @@ sub update {
 					my $id = $miner_conn->{$fh->fileno};							# get index number from connection hash
 	
 					my $buf = <$fh>;									# read socket
-
+					
 					if ($buf) {
 
 						my $req = common::read_json($buf);							# miner request
@@ -236,8 +236,6 @@ sub update {
 	
 								$miner->{$id}->{'address'} = $req->{'params'}[0];
 								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $MINER_IDLE); 
-	
-								new_work($id);								# give the new miner something to do	
 							}
 							else {
 								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Auth Failed\"}\n", $MINER_DISCONNECT);
@@ -246,7 +244,7 @@ sub update {
 		
 						elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {
 	
-							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $MINER_IDLE);
+							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $miner->{$id}->{'state'});
 						}
 		
 						elsif ($req->{'method'} eq 'mining.submit') {						# client submits a share !
@@ -265,22 +263,24 @@ sub update {
 							my $share_hash = unpack("H*", sha256(sha256(pack("H*", $solution)))); 						# prevent duplicate shares
 							if (grep(/$share_hash/, @share_hashes)) {		
 
-								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);				# kill naughty miners
-
+								# print "\nDUPLICATE SHARE!\n";
+								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_TARGETTED);			# kill naughty miners ?
 							}
 							else {
 								push @share_hashes, $share_hash;									# store this solution hash
 	
-								my $diff = mining::verify_difficulty($header, $nonce, $solution, $miner->{$id}->{'work'}->{'bits'}, $pool_target);	# get difficulty
+								my $diff = mining::verify_difficulty($header, $nonce, $solution, $template->{'bits'}, $pool_target);	# check difficulty
 								
 								if ($diff == 1) {											# possible share !!
 
 									if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
 
+										# print "\nGOOD SHARE!\n";
 										$miner_share->{$miner->{$id}->{'address'}}++;						# add to shares
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 									}
 									else {												# bad solution, reject share
+										# print "\nBAD SOLUTION!\n";
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
 									}
 								}
@@ -298,30 +298,35 @@ sub update {
 										if ($@) {											# non-json response
 					
 											if ($resp eq '') {									# block accepted !
+												print "\nFOUND BLOCK!\n";
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 												new_work();
 											}
 											else {											# block rejected !
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+												print "\nREJECTED BLOCK!\n";
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
 											}
 										}
 										else {												# json response (happens sometimes)
 											my $response = decode_json($resp);	
 				
 											if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
+												print "\nFOUND BLOCK! (1)\n";
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_IDLE);
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 												new_work();
 											}
 											else {											# block rejected
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+												print "\nREJECTED BLOCK! (1)\n";
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
 											}
 										}
 									}
 								}
 								else {	# bad share, not difficult enough
 
+									print "\nDIFFICULTY LOWI!!\n";
 									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
 								}
 							}
@@ -352,22 +357,31 @@ sub update {
 				
 				if ($miner->{$id}->{'state'} == $MINER_TARGETTED) {						# has target, send new work
 
+					new_work($id);
+
 					miner_write($fh, "\{\"id\":null,\"method\":\"mining.notify\",\"params\":\[\"$miner->{$id}->{'work'}->{'jobnumber'}\",\"$miner->{$id}->{'work'}->{'version'}\",\"$miner->{$id}->{'work'}->{'previousblockhash'}\",\"$miner->{$id}->{'work'}->{'merkleroot'}\",\"$miner->{$id}->{'work'}->{'finalsaplingroothash'}\",\"$miner->{$id}->{'work'}->{'time'}\",\"$miner->{$id}->{'work'}->{'bits'}\",true,\"ZcashPoW\"\]\}\n", $MINER_ACTIVE);
+					$miner->{$id}->{'updated'} = time;							# reset timestamp
 
 				}
 
 				elsif ($miner->{$id}->{'state'} == $MINER_IDLE) {						# set target
 
-					miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_target\",\"params\":\[\"$miner->{$id}->{'work'}->{'target'}\"\]\}\n", $MINER_TARGETTED);
+					miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_target\",\"params\":\[\"$pool_target\"\]\}\n", $MINER_TARGETTED);
+					$miner->{$id}->{'updated'} = time;							# reset timestamp
 				}
 				
 				elsif ($miner->{$id}->{'state'} == $MINER_AUTHORIZED) {						# set target
-					miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_target\",\"params\":\[\"$miner->{$id}->{'work'}->{'target'}\"\]\}\n", $MINER_TARGETTED);
 
+					miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_target\",\"params\":\[\"$pool_target\"\]\}\n", $MINER_TARGETTED);
+
+					new_work($id);
+
+					$miner->{$id}->{'updated'} = time;							# reset timestamp
 				}		
+
 				elsif ($miner->{$id}->{'state'} == $MINER_ACTIVE) {						# mining, refresh if close to expiry
 
-					if (time - $miner->{$id}->{'updated'} > $timer_interval) {
+					if ( (time - $miner->{$id}->{'updated'}) > $timer_interval) {
 
 						miner_write($fh, "\{\"id\":null,\"method\":\"mining.notify\",\"params\":\[\"$miner->{$id}->{'work'}->{'jobnumber'}\",\"$miner->{$id}->{'work'}->{'version'}\",\"$miner->{$id}->{'work'}->{'previousblockhash'}\",\"$miner->{$id}->{'work'}->{'merkleroot'}\",\"$miner->{$id}->{'work'}->{'finalsaplingroothash'}\",\"$miner->{$id}->{'work'}->{'time'}\",\"$miner->{$id}->{'work'}->{'bits'}\",false,\"ZcashPoW\"\]\}\n", $MINER_ACTIVE);
 
@@ -434,8 +448,6 @@ sub miner_write {
 	my $id = $miner_conn->{$fh->fileno};						# add miners id number to hash of connections
 
 	$fh->write($json);
-
-	$miner->{$id}->{'updated'} = time;											# update timestamp
 
 	$miner->{$id}->{'state'} = $state;											# set miner state
 }
