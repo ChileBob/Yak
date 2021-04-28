@@ -39,8 +39,8 @@ yak-cli :-
 - Decrypts AES256 shielded notifications sent by yak-zec
 - Triggers website URI to enable payment processing
 
-yak-zec :-
-- Zcash fullnode (zcashd) connector/client.
+yak-yec :-
+- Ycash fullnode (zcashd) connector/client.
 - Run it from a terminal AS THE SAME USER that runs zcashd
 - Streams transparent transaction outputs.
 - Streams confirmed (mined) transactions
@@ -49,9 +49,9 @@ yak-zec :-
 - Basic fee mechanism (per block) for monitoring a viewkey.
 - Viewkey registration is by encrypted memo.
 
-yak-yec :-
-- Does everything yak-zec does but does it for Ycash
-- (Incidentally, the idea for this code came from the Ycash people)
+yak-zec :-
+- Will do everything yak-yec does but does it for Zcash
+- Long way behind yak-yec & needs updating...(sorry)
 
 yak-coingeko
 - Broadcasts price updates once a minute.
