@@ -40,7 +40,7 @@ yak-cli :-
 - Triggers website URI to enable payment processing
 
 yak-yec :-
-- Ycash fullnode (zcashd) connector/client.
+- Ycash fullnode (ycashd) connector/client.
 - Run it from a terminal AS THE SAME USER that runs zcashd
 - Streams transparent transaction outputs.
 - Streams confirmed (mined) transactions
