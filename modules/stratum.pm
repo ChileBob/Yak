@@ -445,11 +445,12 @@ sub miner_write {
 
 	my ($fh, $json, $state) = @_;
 
-	my $id = $miner_conn->{$fh->fileno};						# add miners id number to hash of connections
+	my $id = $miner_conn->{$fh->fileno};							# add miners id number to hash of connections
 
 	$fh->write($json);
 
-	$miner->{$id}->{'state'} = $state;											# set miner state
+	$miner->{$id}->{'state'} = $state;										# set miner state
+	$miner->{$id}->{'updated'} = time;										# reset timestamp
 }
 
 

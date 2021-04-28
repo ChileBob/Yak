@@ -10,11 +10,12 @@
 package mining;
 
 use Data::Dumper;
-use Bitcoin::Crypto::Base58 qw(:all);
 use Digest::SHA qw(sha256);
 
 my $debug = 5;						# global debug verbosity, 0 = quiet
 
+
+my $cache_addr_to_script;										# cache payscript so we dont have to keep bothering the node
 
 #########################################################################################################################################################################
 #
@@ -171,21 +172,37 @@ sub addr_to_script {
 
 	my ($address) = @_;										# payment address
 
-	if ($address =~ m/^.m/) {									# testnet addresses, get script from the node (slow)
+	if ($cache_addr_to_script->{$address}) {							# cache payscript so we dont have to keep bothering the node
+		return($cache_addr_to_script->{$address});							# cache payscript so we dont have to keep bothering the node
+	}
+
+	else {
+
 		my $info = common::node_cli('validateaddress', $address, '');
-		return('19' . $info->{'scriptPubKey'});							# return prefixed with compactSize
-	}
-
-	my $payhash = unpack("H*", substr(decode_base58check($address),2));				# raw script
-
-	if ( $address =~ m/^.1/) {									# pay to t1/s1
-
-		return($payhash = '1976a914' . $payhash . '88ac');
-
-	}
-	elsif ( $address =~ m/^.3/) {									# pay to t3/s3
-
-		return($payhash = 'a914' . $payhash . '87');
+	
+	
+		if ( $address =~ m/^s1/) {									# ycash mainnet P2PK
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^s3/) {									# ycash mainnet P2SH
+			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^sm/) {									# ycash testnet P2PK
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t1/) {									# zcash mainnet P2PK
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t3/) {									# zcash mainnet P2SH
+			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t/) {									# zcash testnet P2SH
+			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+		}
+		elsif ( $address =~ m/^t2/) {									# zcash testnet P2SH
+			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+		}
+		return($cache_addr_to_script->{'$address'});
 	}
 }
 

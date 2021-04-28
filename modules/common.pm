@@ -151,23 +151,23 @@ sub addr_type {
 
 	my ($address) = @_;
 
-	if ( (($address =~ m/^s[1,3]/) || ($address =~ m/^sm/)) && length($address) == 35) {	# ycash transparent, main/test
-		return('saddr');
+	if ( ($address =~ m/^s[1,m]/) || ($address =~ m/^t[1,2,3]/) ) {			# transparent (mainnet/testnet, ycash/zcash)
+
+		my $info = node_cli('validateaddress', $address, '');
+
+		if ($info->{'isvalid'}) {
+			return('transparent');
+		}
 	}
-	elsif ( (($address =~ m/^t[1,3]/) || ($address =~ m/^tm/)) && length($address) == 35) {	# zcash transparent, main/test
-		return('taddr');
-	}
-	elsif ( ($address =~ m/^ytestsapling/) && length($address) == 88) {			# ycash shielded test
-		return('yaddr');
-	}
-	elsif ( ($address =~ m/^ys1/) && length($address) == 78) {				# ycash shielded main
-		return('yaddr');
-	}
-	elsif ( ($address =~ m/^ztestsapling/) && length($address) == 88) {			# zcash shielded testnet
-		return('zaddr');
-	}
-	elsif ( ($address =~ m/^zs1/) && length($address) == 78) {				# zcash shielded mainnetnetnetnet
-		return('zaddr');
+											# shielded (mainnet/testnet, ycash/zcash)
+											
+	elsif ( ($address =~ m/^ytestsapling/) || ($address =~ m/^ys1/) || ($address =~ m/^ztestsapling/) || ($address =~ m/^zs1/) ) {
+
+		my $info = node_cli('z_validateaddress', $address, '');
+
+		if ($info->{'isvalid'}) {
+			return('shielded');
+		}
 	}
 }
 
