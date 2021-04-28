@@ -16,6 +16,7 @@ our $pool_select;
 
 our $pool_target = '007ffff000000000000000000000000000000000000000000000000000000000';						# pool target, all miners get the same
 our $pool_sols   = 0;														# guestimated sols/s	(shares per min x 8.628)
+our $pool_lastblock;														# last block mined
 
 our $MINER_DISCONNECT  = 0;		# - disconnected
 
@@ -285,7 +286,6 @@ sub update {
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 									}
 									else {												# bad solution, reject share
-										# print "\nBAD SOLUTION!\n";
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
 									}
 								}
@@ -306,11 +306,11 @@ sub update {
 												print "\nFOUND BLOCK!\n";
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
 												$pool_shares++;									# increment pool share counter
+												$pool_lastblock = $template->{'height'};
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 												new_work();
 											}
 											else {											# block rejected !
-												print "\nREJECTED BLOCK!\n";
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
 											}
 										}
@@ -318,22 +318,20 @@ sub update {
 											my $response = decode_json($resp);	
 				
 											if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
-												print "\nFOUND BLOCK! (1)\n";
+												print "\nFOUND BLOCK!\n";
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
 												$pool_shares++;									# increment pool share counter
+												$pool_lastblock = $template->{'height'};
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 												new_work();
 											}
 											else {											# block rejected
-												print "\nREJECTED BLOCK! (1)\n";
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
 											}
 										}
 									}
 								}
 								else {	# bad share, not difficult enough
-
-									print "\nDIFFICULTY LOWI!!\n";
 									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
 								}
 							}
@@ -481,14 +479,17 @@ sub clear_shares {
 #
 sub timer_interval {
 
-	if ( (time - $timer_lastcalled) >= 60) {										# no more than once a minute
+	if ( (time - $timer_lastcalled) >= 60) {						# no more than once a minute
 
 		$pool_sols = int ($pool_sols + (($pool_shares * 8.5) / ((time - $timer_lastcalled)/ 60))) / 2;		# guestimate pool hashrate
 		$pool_shares = 0;
 
 		print "\n";
-		print "Hashrate : $pool_sols Sols/s\n";
-		print "Miners   : " . scalar $pool_select->can_write(0) . "\n";						# number of connected miners
+		print "Block Height  : $template->{'height'}\n";
+		print "Last Mined    : $pool_lastblock\n";
+		print "Pool Hashrate : $pool_sols Sols/s\n";
+		print "Direct Miners : " . scalar $pool_select->can_write(0) . "\n";					# miners connecting to local port
+		print "Remote Miners : NOT AVAILABLE\n";								# miners connected via websocket
 		print "\n";
 
 		$timer_lastcalled = time;										# reset lastcalled timestamp to now
