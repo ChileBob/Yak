@@ -24,17 +24,12 @@ sub verify_difficulty {
 
 	my ($header, $nonce, $solution, $nbits, $miner_target) = @_;					# hex-encoded strings, endian-ness as per block header
 
-	my $block_target = nbits_to_target($nbits);							# convert nbits to 256-bit target (little-endian)
-	$block_target =~ s/0*$//;									# strip trailing zeros from block target (little-endian)
-
-	$miner_target =~ s/0*$//;									# strip trailing zeros from miner target (little-endian)
-
 	my $diff = unpack("H*", reverse sha256(sha256(pack("H*", $header . $nonce . $solution)))); 	# get hex-encoded double-sha256 of the block header
 
-	if ( hex( reverse_bytes(substr($diff, 0, length($block_target)))) <= hex(reverse_bytes($block_target)) ) {	# WE FOUND A BLOCK !!!!!
+	if (zero_count($diff) > zero_count(nbits_to_target($nbits))) {
 		return(2);
 	}
-	elsif ( hex( reverse_bytes(substr($diff, 0, length($miner_target)))) <= hex(reverse_bytes($miner_target)) ) {	# solution better than miner target !
+	if (zero_count($diff) > zero_count($miner_target)) {
 		return(1);
 	}
 }
@@ -46,7 +41,7 @@ sub verify_difficulty {
 sub verify_equihash {
 
 	my ($header, $nonce, $solution, $N, $K) = @_;							# hex-encoded strings, endian-ness as per block header, equihash N & K integers
-													#
+	
 	my $bpi = ($N / ($K + 1)) + 1;									# bits per index	200/9 = 21       192/7 = 25
 	my $indexes = 2**$K;										# number of indexes	200/9 = 512      192/7 = 128
 	my $hashlen = $N / 4;										# blake2b hash length	200/9 = 50       192/7 = 48
@@ -58,7 +53,7 @@ sub verify_equihash {
 
 	$header   = pack("H*", $header);								# convert args to binary
 	$nonce    = pack("H*", $nonce);
-	$solution = pack("H*", substr($solution, 6));
+	$solution = pack("H*", substr($solution, 6));							# remove the compact size prefix from solution
 
 	my @sol = map { oct "0b$_" } unpack "(a$bpi)*", unpack 'B*', $solution;				# extract indexes from solution
 	@sol == $indexes or return(0);
@@ -359,3 +354,26 @@ sub template_to_header {
 	return($header);
 }
 
+
+
+#########################################################################################################################################################################
+#
+# return count of leading '0' in string, its a measure of difficulty
+#
+sub zero_count {
+
+	my ($string) = @_;
+
+	my $count = 0;
+	foreach my $char (split(//, $string)) {
+		if ($char eq '0') {
+			$count++;
+		}
+		else {
+			return($count);
+		}
+	}
+	return($count);
+}
+
+1;

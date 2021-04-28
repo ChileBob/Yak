@@ -276,6 +276,7 @@ sub update {
 								if ($diff == 1) {											# possible share !!
 
 									if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
+
 										$miner_share->{$miner->{$id}->{'address'}}++;						# add to shares
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 									}

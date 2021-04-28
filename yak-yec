@@ -276,7 +276,7 @@ while ($running >= 0) {
     
 					my @zmq_parts = $zmq_socket->recv_multipart();							# get zmq broadcast
    	 
-					if ($zmq_parts[0] eq 'rawtx') {									# raw transaction    
+					if ( ($zmq_parts[0] eq 'rawtx') && ($config->{'librust'}) ) {						# raw transaction    
 
 						my $txn = common::node_cli('decoderawtransaction', unpack("H*", $zmq_parts[1]), '');	# decode raw transaction using node RPC
 
