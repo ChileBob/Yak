@@ -73,6 +73,11 @@ if ($key eq 'changethiskey') {														# using the default key?? bad puppy 
 
 my $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
 
+if ($node_config->{'testnet'} && $config->{'librust'}) {										# disable payment detection for testnet
+	common::debug(0, "\nWARNING!!! PAYMENT DETECTION DISABLED (TESTNET) !!!");
+	delete($config->{'librust'});
+}
+
 my $info  = common::node_cli('getblockchaininfo', '', '');										# attempt node RPC connection
 
 while ( ($info->{'blocks'} != $info->{'headers'} ) || !exists($info->{'blocks'}) ) {							# delay until node is synced

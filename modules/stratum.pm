@@ -13,7 +13,9 @@ my $debug = 0;															# debug verbosity for this package
 
 our $pool_listen;
 our $pool_select;
+
 our $pool_target = '007ffff000000000000000000000000000000000000000000000000000000000';						# pool target, all miners get the same
+our $pool_sols   = 0;														# guestimated sols/s	(shares per min x 8.628)
 
 our $MINER_DISCONNECT  = 0;		# - disconnected
 
@@ -52,6 +54,8 @@ my $pool_percent     = 0;													# default pool fee is zero, set by stratum
 my $pool_transparent = '';													# transparent address we mine to
 my $pool_spool;															# spool dir for mining shares
 
+my $pool_shares     = 0;													# shares per minute (approx)
+
 my $template;
 
 my $miner;															# miner (config/state)
@@ -66,6 +70,7 @@ my $running = 0;														# runtime flag
 
 my $timer_interval = 30;													# timer reset (seconds), refresh miner tasks
 my $timer_timeout = 60;														# timeout (seconds), clients inactive for this long are disconnected
+my $timer_lastcalled = time;													# last time the timer interval was called
 
 #######################################################################################################################################
 #
@@ -275,8 +280,8 @@ sub update {
 
 									if ( mining::verify_equihash($header, $nonce, $solution, 192, 7) ) {				# check equihash solution
 
-										# print "\nGOOD SHARE!\n";
 										$miner_share->{$miner->{$id}->{'address'}}++;						# add to shares
+										$pool_shares++;										# increment pool share counter
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 									}
 									else {												# bad solution, reject share
@@ -300,6 +305,7 @@ sub update {
 											if ($resp eq '') {									# block accepted !
 												print "\nFOUND BLOCK!\n";
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
+												$pool_shares++;									# increment pool share counter
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 												new_work();
 											}
@@ -314,6 +320,7 @@ sub update {
 											if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
 												print "\nFOUND BLOCK! (1)\n";
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
+												$pool_shares++;									# increment pool share counter
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 												new_work();
 											}
@@ -395,6 +402,8 @@ sub update {
 			}
 		}
 	}
+
+	timer_interval();													# time related activities
 }	
 
 
@@ -408,7 +417,7 @@ sub shutdown {
 
 		my @miner_all = $pool_select->can_write(0);								# get handles for all connected miners
 	
-		foreach my $fh (@miner_all) {											# loop through & disconnect
+		foreach my $fh (@miner_all) {										# loop through & disconnect
 			if ($fh != $pool_listen) {
 				miner_disconnect($fh);
 			}
@@ -465,6 +474,26 @@ sub clear_shares {
 	}
 }
 
+
+#######################################################################################################################################
+#
+# Timed events
+#
+sub timer_interval {
+
+	if ( (time - $timer_lastcalled) >= 60) {										# no more than once a minute
+
+		$pool_sols = int ($pool_sols + (($pool_shares * 8.5) / ((time - $timer_lastcalled)/ 60))) / 2;		# guestimate pool hashrate
+		$pool_shares = 0;
+
+		print "\n";
+		print "Hashrate : $pool_sols Sols/s\n";
+		print "Miners   : " . scalar $pool_select->can_write(0) . "\n";						# number of connected miners
+		print "\n";
+
+		$timer_lastcalled = time;										# reset lastcalled timestamp to now
+	}
+}
 
 1;	# all packages are true, even the ones that are not, especially the ones that are not
 
