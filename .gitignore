@@ -1,4 +1,5 @@
 libs/*
+miners/*
 spool/*
 archive
 rust/zcash/target
