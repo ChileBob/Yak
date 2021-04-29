@@ -1,0 +1,4 @@
+#!/bin/bash
+
+gminer/miner --algo 192_7 --pers ZcashPoW --server 127.0.0.1 --port 3333 --user s1dd7Rh5v1NBoKefVj4ZjwxiHJMGseCfAT8 --pass x --devices 0
+

@@ -58,6 +58,7 @@ require "$install/modules/blake2b.pm";													# needed by mining.pm
 require "$install/modules/mining.pm";													# mining
 require "$install/modules/stratum.pm";													# stratum server
 require "$install/modules/librust.pm";													# FFI subs to use rust libraries
+require "$install/modules/payout.pm";													# pool payout 
 
 my $running = 0;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
 
@@ -171,6 +172,9 @@ $zmq_socket->connect($node_config->{'zmqpubrawtx'});
 $zmq_socket->subscribe('');							 
 
 stratum::new_work();															# put miners to work
+
+#payout::load_shares($block);														# kick payment module
+#exit;
 
 common::debug(0, "Connecting to socket server : $config->{'web'}\n");
 

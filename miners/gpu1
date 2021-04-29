@@ -1,0 +1,4 @@
+#!/bin/bash
+
+miniZ/miniZ --algo 192_7 --pers ZcashPoW --url=ys1c8cvazsz5gfp2zhdmzxcarfh4gp6jezdcxnywfcpyuau0l0f9uj99tzvrr6sjw5rfhpsw06lc6n@127.0.0.1:3333 --cuda-devices 1
+

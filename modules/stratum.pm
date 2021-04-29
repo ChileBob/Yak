@@ -28,9 +28,8 @@ our $MINER_IDLE        = 16;		# - idle
 our $MINER_TARGETTED   = 17;		# - targetted
 our $MINER_ACTIVE      = 18;		# - active (mining)
 
-
-my $MINER_TCP = 1;			# direct connection
-my $MINER_WEB = 2;			# via websocket
+my $MINER_TCP = 1;			# via local port
+my $MINER_WEB = 2;			# via remote websocket
 
 #########################################################################################################################################################################
 #
@@ -72,6 +71,7 @@ my $running = 0;														# runtime flag
 my $timer_interval = 30;													# timer reset (seconds), refresh miner tasks
 my $timer_timeout = 60;														# timeout (seconds), clients inactive for this long are disconnected
 my $timer_lastcalled = time;													# last time the timer interval was called
+my $timer_nonce = 600;														# time a nonce will be used (5 minutes)
 
 #######################################################################################################################################
 #
@@ -101,7 +101,9 @@ sub start {
 	
 		$running = 1;													# set runtime flag
 
-		make_path("$main::install/spool/unpaid/$pool_transparent");							# create spool dir for share records
+		make_path("$main::install/spool/unpaid/$pool_transparent/shares");						# create spool dir for share records
+		make_path("$main::install/spool/unpaid/$pool_transparent/blocks");						# create spool dir for share records
+
 	}
 	else {
 		common::debug(0,"Failed to start stratum pool.");
@@ -115,7 +117,7 @@ sub start {
 #
 sub new_block {
 
-	DumpFile("$main::install/spool/unpaid/$pool_transparent/$template->{'height'}", $miner_share);					# write miner shares to spool dir
+	DumpFile("$main::install/spool/unpaid/$pool_transparent/shares/$template->{'height'}", $miner_share);				# write miner shares to spool dir
 
 	clear_shares();
 	@share_id = ();
@@ -174,6 +176,7 @@ sub new_work {
 	
 				$miner->{$id}->{'work'}->{'jobnumber'}++;									# increment job number
 				$miner->{$id}->{'work'}->{'shares'} = 0;									# clear share counter
+				$miner->{$id}->{'timer_nonce'} = time;										# timestamp for the nonce
 	
 				if ( $miner->{$id}->{'state'} > $MINER_TARGETTED ) { 						# tag miner as idle
 					$miner->{$id}->{'state'} = $MINER_TARGETTED;	
@@ -239,6 +242,8 @@ sub update {
 		
 						elsif ($req->{'method'} eq 'mining.authorize') {					# username/password 
 		
+							$req->{'params'}[0] =~ s/\..*$//;						# remove rignames etc, we only want the address
+							
 							if ( common::addr_type($req->{'params'}[0]) ) {					# client username, payment address can be any ycash/zcash type
 	
 								$miner->{$id}->{'address'} = $req->{'params'}[0];
@@ -251,8 +256,6 @@ sub update {
 		
 						elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {				# set_extranonce support
 	
-							print "DEBUG: Extranonce support !!\n";
-
 							$miner->{$id}->{'extranonce'} = 1;
 							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $miner->{$id}->{'state'});
 						}
@@ -274,7 +277,7 @@ sub update {
 							if (grep(/$share_hash/, @share_hashes)) {		
 
 								# print "\nDUPLICATE SHARE!\n";
-								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_TARGETTED);			# kill naughty miners ?
+								miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Duplicate share\"\}\n", $MINER_TARGETTED);			# kill naughty miners ?
 							}
 							else {
 								push @share_hashes, $share_hash;									# store this solution hash
@@ -290,7 +293,7 @@ sub update {
 										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 									}
 									else {												# bad solution, reject share
-										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
+										miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Bad solution\"\}\n", $MINER_ACTIVE);
 									}
 								}
 
@@ -308,6 +311,9 @@ sub update {
 					
 											if ($resp eq '') {									# block accepted !
 												print "\nFOUND BLOCK!\n";
+
+												DumpFile("$main::install/spool/unpaid/$pool_transparent/blocks/$template->{'height'}", $template);	# log the block
+
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
 												$pool_shares++;									# increment pool share counter
 												$pool_lastblock = $template->{'height'};
@@ -315,7 +321,7 @@ sub update {
 												new_work();
 											}
 											else {											# block rejected !
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Node rejected\"\}\n", $MINER_ACTIVE);
 											}
 										}
 										else {												# json response (happens sometimes)
@@ -323,6 +329,9 @@ sub update {
 				
 											if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
 												print "\nFOUND BLOCK!\n";
+
+												DumpFile("$main::install/spool/unpaid/$pool_transparent/blocks/$template->{'height'}", $template);	# log the block
+
 												$miner_share->{$miner->{$id}->{'address'}}++;					# add to shares
 												$pool_shares++;									# increment pool share counter
 												$pool_lastblock = $template->{'height'};
@@ -330,13 +339,13 @@ sub update {
 												new_work();
 											}
 											else {											# block rejected
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_ACTIVE);
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Node rejected\"\}\n", $MINER_ACTIVE);
 											}
 										}
 									}
 								}
 								else {	# bad share, not difficult enough
-									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false\}\n", $MINER_IDLE);
+									miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Low difficulty\"\}\n", $MINER_IDLE);
 								}
 							}
 						}
@@ -390,6 +399,8 @@ sub update {
 
 				elsif ($miner->{$id}->{'state'} == $MINER_ACTIVE) {						# mining, refresh if close to expiry
 
+					miner_set_extranonce($fh);								# change nonce, sets miner state to TARGETTED
+
 					if ( (time - $miner->{$id}->{'updated'}) > $timer_interval) {
 
 						miner_write($fh, "\{\"id\":null,\"method\":\"mining.notify\",\"params\":\[\"$miner->{$id}->{'work'}->{'jobnumber'}\",\"$miner->{$id}->{'work'}->{'version'}\",\"$miner->{$id}->{'work'}->{'previousblockhash'}\",\"$miner->{$id}->{'work'}->{'merkleroot'}\",\"$miner->{$id}->{'work'}->{'finalsaplingroothash'}\",\"$miner->{$id}->{'work'}->{'time'}\",\"$miner->{$id}->{'work'}->{'bits'}\",false,\"ZcashPoW\"\]\}\n", $MINER_ACTIVE);
@@ -401,14 +412,6 @@ sub update {
 				elsif ($miner->{$id}->{'state'} == $MINER_DISCONNECT) {						# disconnect
 					miner_disconnect($fh);
 				}
-
-				elsif ($miner->{$id}->{'work'}->{'shares'} % 32 == 0) {						# change nonce every 32 shares (DEBUG! NEEDS TO BE LONGER!!)
-
-					if ($miner->{$id}->{'extranonce'} == 1) {						# check client support mining.set_extranonce
-						miner_set_extranonce($fh);
-					}
-				}
-
 			}
 		}
 	}
@@ -468,8 +471,8 @@ sub miner_write {
 
 	$fh->write($json);
 
-	$miner->{$id}->{'state'} = $state;										# set miner state
-	$miner->{$id}->{'updated'} = time;										# reset timestamp
+	$miner->{$id}->{'state'} = $state;							# set miner state
+	$miner->{$id}->{'updated'} = time;							# reset timestamp
 }
 	
 
@@ -483,9 +486,17 @@ sub miner_set_extranonce {
 
 	my $id = $miner_conn->{$fh->fileno};							# add miners id number to hash of connections
 
-	$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);					# random nonce1 (16 hex-chars, 8-bytes)
+	if ($miner->{$id}->{'extranonce'} == 1) {						# miner supports set_extranonce
 
-	miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_extranonce\",\"params\":\[\"$miner->{$id}->{'nonce1'}\",8\]\}\n", $MINER_TARGETTED);
+		if ( (time - $miner->{$id}->{'timer_nonce'}) > $timer_nonce) {			# check nonce expiry time
+
+			$miner->{$id}->{'timer_nonce'} = time;					# reset expiry time
+
+			$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);			# generate random nonce1 (16 hex-chars, 8-bytes)
+
+			miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_extranonce\",\"params\":\[\"$miner->{$id}->{'nonce1'}\",8\]\}\n", $MINER_TARGETTED);
+		}
+	}
 }
 
 
