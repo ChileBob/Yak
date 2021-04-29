@@ -214,6 +214,7 @@ sub update {
 					$miner->{$miner_idx}->{'updated'} = time;
 					$miner->{$miner_idx}->{'block'} = 0;							# block number 
 					$miner->{$miner_idx}->{'worknumber'} = 1;						# job number
+					$miner->{$miner_idx}->{'extranonce'} = 0;						# extranonce support
 	
 					$miner_idx++;
 				}
@@ -248,9 +249,12 @@ sub update {
 							}
 						}
 		
-						elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {
+						elsif ($req->{'method'} eq 'mining.extranonce.subscribe') {				# set_extranonce support
 	
-							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Not Supported\"}\n", $miner->{$id}->{'state'});
+							print "DEBUG: Extranonce support !!\n";
+
+							$miner->{$id}->{'extranonce'} = 1;
+							miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true,\"error\": null}\n", $miner->{$id}->{'state'});
 						}
 		
 						elsif ($req->{'method'} eq 'mining.submit') {						# client submits a share !
@@ -397,6 +401,14 @@ sub update {
 				elsif ($miner->{$id}->{'state'} == $MINER_DISCONNECT) {						# disconnect
 					miner_disconnect($fh);
 				}
+
+				elsif ($miner->{$id}->{'work'}->{'shares'} % 32 == 0) {						# change nonce every 32 shares (DEBUG! NEEDS TO BE LONGER!!)
+
+					if ($miner->{$id}->{'extranonce'} == 1) {						# check client support mining.set_extranonce
+						miner_set_extranonce($fh);
+					}
+				}
+
 			}
 		}
 	}
@@ -458,6 +470,22 @@ sub miner_write {
 
 	$miner->{$id}->{'state'} = $state;										# set miner state
 	$miner->{$id}->{'updated'} = time;										# reset timestamp
+}
+	
+
+#######################################################################################################################################
+#
+# Set new nonce
+#
+sub miner_set_extranonce {
+
+	my ($fh) = @_;
+
+	my $id = $miner_conn->{$fh->fileno};							# add miners id number to hash of connections
+
+	$miner->{$id}->{'nonce1'} = aes256::keyRandom(16);					# random nonce1 (16 hex-chars, 8-bytes)
+
+	miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_extranonce\",\"params\":\[\"$miner->{$id}->{'nonce1'}\",8\]\}\n", $MINER_TARGETTED);
 }
 
 
