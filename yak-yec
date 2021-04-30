@@ -61,6 +61,8 @@ require "$install/modules/stratum.pm";													# stratum server
 require "$install/modules/librust.pm";													# FFI subs to use rust libraries
 require "$install/modules/payout.pm";													# pool payout 
 
+print "\n\n" . common::yaksay("Welcome to Yak-YEC !!") . "\n\n";									# say hi
+
 my $running = 0;															# runtime flag (0 = exit, 1 = running, 2 = shutting down)
 
 my @notifications = ( $packet::PKT_YEC_SHIELDED, $packet::PKT_CONFIRMATION, $packet::PKT_YEC_TRANSPARENT);				# packet types we deliver, remove from array to disable

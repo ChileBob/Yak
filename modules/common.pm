@@ -363,5 +363,54 @@ sub node_cli {
 	}
 }
 
+
+#############################################################################################################################################################################
+#
+# generate funny text message (inspired by cowsay)
+#
+sub yaksay {
+
+	my ($message) = @_;						# just in case we want to say something specific instead of random
+
+	my @fortunes;
+
+	if ($message) {
+		push @fortunes, $message;
+	}
+	else {								# get a random fortune cookie
+		open (FORTUNES, "$main::install/modules/fortunes.txt");	
+		@fortunes = <FORTUNES>;
+		close (FORTUNES);
+	}
+
+	my @words = split(" " , $fortunes[ int(rand(@fortunes)) ]);	# randomly pick one & split into words
+
+	my $line = '';
+	my @bubble = ();
+
+	foreach my $word (@words) {					# split into 40 chars per line max
+		if ( length("$line $word") < 40) {
+			$line = "$line $word";
+		}
+		else {
+			$line =~ s/^\s*//;
+			push @bubble, $line;
+			$line = $word;
+		}
+	}
+	push @bubble, $line;
+
+	my @yak = (							# the yak is called 'Fluffy'
+		'       \\',
+		'        \\   ^__^',					# there's a reason it looks like a cow
+		'         \\  (oo)\\_______',
+		'            (__)\\       )\\/\\',
+		'                ||----w |',				# ever heard of 'cowsay' ?  ;-)
+		'                ||     ||'
+	);
+
+	return( join("\n", @bubble) . "\n" . join("\n", @yak) );	# return completed text
+}
+
 1;
 
