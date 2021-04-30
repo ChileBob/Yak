@@ -36,7 +36,7 @@ yak-yak :-
 yak-cli :-
 - Websocket command line client, run it from a terminal.
 - Listens to broadcasts from yak-yak & displays.
-- Decrypts AES256 shielded notifications sent by yak-zec
+- Decrypts AES256 shielded notifications sent by yak-yec & yak-zec
 - Triggers website URI to enable payment processing
 
 yak-yec :-
