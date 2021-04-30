@@ -161,6 +161,8 @@ sub txn_out {
 
 	my $script = addr_to_script($address);								# raw script
 
+#	print "txn_out() : $address, $zats : $amount : $script\n";
+
 	return($amount . $script);
 }
 
@@ -175,34 +177,33 @@ sub addr_to_script {
 	if ($cache_addr_to_script->{$address}) {							# cache payscript so we dont have to keep bothering the node
 		return($cache_addr_to_script->{$address});							# cache payscript so we dont have to keep bothering the node
 	}
-
 	else {
 
 		my $info = common::node_cli('validateaddress', $address, '');
 	
 	
 		if ( $address =~ m/^s1/) {									# ycash mainnet P2PK
-			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+			$cache_addr_to_script->{$address} = "19$info->{'scriptPubKey'}";
 		}
 		elsif ( $address =~ m/^s3/) {									# ycash mainnet P2SH
-			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+			$cache_addr_to_script->{$address} = $info->{'scriptPubKey'};
 		}
 		elsif ( $address =~ m/^sm/) {									# ycash testnet P2PK
-			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+			$cache_addr_to_script->{$address} = "19$info->{'scriptPubKey'}";
 		}
 		elsif ( $address =~ m/^t1/) {									# zcash mainnet P2PK
-			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+			$cache_addr_to_script->{$address} = "19$info->{'scriptPubKey'}";
 		}
 		elsif ( $address =~ m/^t3/) {									# zcash mainnet P2SH
-			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+			$cache_addr_to_script->{$address} = $info->{'scriptPubKey'};
 		}
 		elsif ( $address =~ m/^t/) {									# zcash testnet P2SH
-			$cache_addr_to_script->{'$address'} = '19' . $info->{'scriptPubKey'};
+			$cache_addr_to_script->{$address} = "19$info->{'scriptPubKey'}";
 		}
 		elsif ( $address =~ m/^t2/) {									# zcash testnet P2SH
-			$cache_addr_to_script->{'$address'} = $info->{'scriptPubKey'};
+			$cache_addr_to_script->{$address} = $info->{'scriptPubKey'};
 		}
-		return($cache_addr_to_script->{'$address'});
+		return($cache_addr_to_script->{$address});
 	}
 }
 

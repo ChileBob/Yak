@@ -1,4 +1,8 @@
 #!/bin/bash
 
-gminer/miner --algo 192_7 --pers ZcashPoW --server 127.0.0.1 --port 3333 --user s1dd7Rh5v1NBoKefVj4ZjwxiHJMGseCfAT8 --pass x --devices 0
+# mainnet
+#gminer/miner --algo 192_7 --pers ZcashPoW --server 127.0.0.1 --port 3333 --user s1dd7Rh5v1NBoKefVj4ZjwxiHJMGseCfAT8 --pass x --devices 0
+
+# testnet
+gminer/miner --algo 192_7 --pers ZcashPoW --server 127.0.0.1 --port 3333 --user smPpr6gUv3CgDpvB9xt3o24QLefZFsxtTbP --pass x --devices 0
 

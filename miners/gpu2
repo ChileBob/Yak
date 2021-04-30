@@ -1,4 +1,11 @@
 #!/bin/bash
 
-miniZ/miniZ --algo 192_7 --pers ZcashPoW --url=ys1c8cvazsz5gfp2zhdmzxcarfh4gp6jezdcxnywfcpyuau0l0f9uj99tzvrr6sjw5rfhpsw06lc6n@127.0.0.1:3333 --cuda-devices 2 --ocX
+# mainnet
+#
+#miniZ/miniZ --algo 192_7 --pers ZcashPoW --url=ys1c8cvazsz5gfp2zhdmzxcarfh4gp6jezdcxnywfcpyuau0l0f9uj99tzvrr6sjw5rfhpsw06lc6n@127.0.0.1:3333 --cuda-devices 2 --ocX
+
+# testnet
+#
+miniZ/miniZ --algo 192_7 --pers ZcashPoW --url=ytestsapling1swwkzpj4ut9yjuxy7ph506gdk0me0pjj7vkvtc9t2afkrp7hf8frcsvj86dtwl2xkna9g47wnq0@127.0.0.1:3333 --cuda-devices 2 --ocX
+
 

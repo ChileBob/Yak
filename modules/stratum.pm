@@ -47,7 +47,15 @@ use File::Path qw(make_path);													# create spool directories
 use YAML qw(DumpFile);														# write miner shares to spool directory
 use Digest::SHA qw(sha256);													# hash miner solutions to prevent duplicates
 
-my $devfee_address  = 's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP';									# ChileBob spends this on wine, women & song
+our $devfee_address;
+
+my @devfee_addrs = (														# ChileBob Devfee Addresses
+	's1YqPfBU6Z9MhnWrPkYBNtUaCzhjno1kKSP',											#
+	'smN4pgFNjLmCMrawa9nqqb7MxYsg9w48Ln1',											#
+	'tmUN1iGyPuAQ5KhSg31cPTvesLhS5M4Fi6f',											#
+	't1gLs4YQ9mD8M8he2FgD1yd34TNCBjRPFCb'											#
+);
+
 our $devfee_percent = 0.5;													# .....not much on song! :-)
 
 my $pool_percent     = 0;													# default pool fee is zero, set by stratum::init()
@@ -86,6 +94,14 @@ sub start {
 		$pool_transparent = $address;											# pool params 
 		$pool_percent = 0 + $fee;											
 	
+		my $prefix = substr($pool_transparent,0,2);									# select the appropriate devfee address
+		foreach my $addr (@devfee_addrs) {
+			if ($addr =~ m/^$prefix/) {
+				$devfee_address = $addr;
+				print "- Dev Addr  : $devfee_address\n";
+			}
+		}
+
 		$pool_listen = IO::Socket::INET->new (										# open listening socket
 			LocalPort => $port,
 			Proto => 'tcp',
@@ -303,6 +319,8 @@ sub update {
 		
 										my $rawblock = $header . $nonce . $solution . $miner->{$id}->{'work'}->{'tx_data'};		# add transaction data
 								
+										print "RAW: $rawblock\n";
+
 										my $resp = `$main::node_client submitblock $rawblock 2>&1`;					# submit the block
 					
 										my $eval = eval { decode_json($resp) };
@@ -320,8 +338,11 @@ sub update {
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": true\}\n", $MINER_ACTIVE);
 												new_work();
 											}
+
 											else {											# block rejected !
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Node rejected\"\}\n", $MINER_ACTIVE);
+												print "$resp\n";
+
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Rejected\"\}\n", $MINER_ACTIVE);
 											}
 										}
 										else {												# json response (happens sometimes)
@@ -339,7 +360,10 @@ sub update {
 												new_work();
 											}
 											else {											# block rejected
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Node rejected\"\}\n", $MINER_ACTIVE);
+												print "Bad Share!\n";
+												print Dumper $response;
+
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Rejected\"\}\n", $MINER_ACTIVE);
 											}
 										}
 									}
