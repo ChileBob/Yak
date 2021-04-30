@@ -319,8 +319,6 @@ sub update {
 		
 										my $rawblock = $header . $nonce . $solution . $miner->{$id}->{'work'}->{'tx_data'};		# add transaction data
 								
-										print "RAW: $rawblock\n";
-
 										my $resp = `$main::node_client submitblock $rawblock 2>&1`;					# submit the block
 					
 										my $eval = eval { decode_json($resp) };
@@ -328,6 +326,7 @@ sub update {
 										if ($@) {											# non-json response
 					
 											if ($resp eq '') {									# block accepted !
+
 												print "\nFOUND BLOCK!\n";
 
 												DumpFile("$main::install/spool/unpaid/$pool_transparent/blocks/$template->{'height'}", $template);	# log the block
@@ -340,15 +339,14 @@ sub update {
 											}
 
 											else {											# block rejected !
-												print "$resp\n";
-
-												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Rejected\"\}\n", $MINER_ACTIVE);
+												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"$resp\"\}\n", $MINER_ACTIVE);
 											}
 										}
 										else {												# json response (happens sometimes)
 											my $response = decode_json($resp);	
 				
 											if ($response->{'content'}->{'result'}->{'height'} == ($block->{'height'} + 1) ) {	# block accepted
+
 												print "\nFOUND BLOCK!\n";
 
 												DumpFile("$main::install/spool/unpaid/$pool_transparent/blocks/$template->{'height'}", $template);	# log the block
@@ -360,9 +358,6 @@ sub update {
 												new_work();
 											}
 											else {											# block rejected
-												print "Bad Share!\n";
-												print Dumper $response;
-
 												miner_write($fh, "\{\"id\":$req->{'id'},\"result\": false,\"error\": \"Rejected\"\}\n", $MINER_ACTIVE);
 											}
 										}
