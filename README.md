@@ -36,12 +36,12 @@ yak-yak :-
 yak-cli :-
 - Websocket command line client, run it from a terminal.
 - Listens to broadcasts from yak-yak & displays.
-- Decrypts AES256 shielded notifications sent by yak-zec
+- Decrypts AES256 shielded notifications sent by yak-yec & yak-zec
 - Triggers website URI to enable payment processing
 
 yak-yec :-
-- Ycash fullnode (ycashd) connector/client.
-- Run it from a terminal AS THE SAME USER that runs zcashd
+- Ycash fullnode (ycashd) connector & websocket client.
+- Run it from a terminal AS THE SAME USER that runs ycashd
 - Streams transparent transaction outputs.
 - Streams confirmed (mined) transactions
 - Decode shielded outputs using viewkeys.
