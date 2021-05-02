@@ -21,8 +21,8 @@ my $config = {																# DEFAULT CONFIGURATION
 	web => 'ws://127.0.0.1:8834',													# websocket server
 	pool_port => 3333,														# mining pool port number
 	pool_fee => 0.5,														# pool fee (percentage)
-#	pool_yaddr => "ys1y4ewqg6yuk67exdxy94032wwkyerwu0j3qp833xmmedusxluru8cly0ajvm9063k95y77j75yce",					# pool yaddr (mainnet)
-	pool_yaddr => 'ytestsapling15tpht93x0uy7sp2at2zdcnw4pwk7rquyg0jgzkdavhlkz20vfty5lpa5fklt5hqhl4g3ql0d9f4',			# pool yaddr (testnet)
+#	pool_shielded => "ys1y4ewqg6yuk67exdxy94032wwkyerwu0j3qp833xmmedusxluru8cly0ajvm9063k95y77j75yce",				# pool yaddr (mainnet)
+	pool_shielded => 'ytestsapling15tpht93x0uy7sp2at2zdcnw4pwk7rquyg0jgzkdavhlkz20vfty5lpa5fklt5hqhl4g3ql0d9f4',			# pool yaddr (testnet)
 	timer => 60,															# interval timer
 	debug => 5,															# debugging output level
 #	librust => 'ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
@@ -75,7 +75,7 @@ if ($key eq 'changethiskey') {														# using the default key?? bad puppy 
 	common::debug(0, "\nWARNING!!! YOU MUST CHANGE THE WEBSOCKET ENCRYPTION KEY !!!");
 }
 
-my $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
+our $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
 
 if ($node_config->{'testnet'} && $config->{'librust'}) {										# disable payment detection for testnet
 	common::debug(0, "\nWARNING!!! PAYMENT DETECTION DISABLED (TESTNET) !!!");
@@ -91,7 +91,7 @@ while ( ($info->{'blocks'} != $info->{'headers'} ) || !exists($info->{'blocks'})
 	$info  = common::node_cli('getblockchaininfo', '', '');										# reload chain info
 }
 
-my $block = common::node_cli('getblock', $info->{'bestblockhash'}, 'abort');								# load last block, abort if node is down
+our $block = common::node_cli('getblock', $info->{'bestblockhash'}, 'abort');								# load last block, abort if node is down
 
 if ( ($node_config->{'mineraddress'} || $config->{'librust'}) && ($node_config->{'zmqpubrawtx'} ne $node_config->{'zmqpubhashblock'} )) {
 
@@ -369,10 +369,19 @@ while ($running >= 0) {
 							push @packet, packet::generate($packet::PKT_CONFIRMATION, \@data, $config->{'client_key'});
 						}
 	
-						@viewkey = common::xfvk_active($block->{'height'});					# check viewkeys for expiry
+						@viewkey = common::xfvk_active($block->{'height'});							# check viewkeys for expiry
 
-						stratum::new_block();									# spool miner shares
-						stratum::new_work();									# generate new work for miners
+						if ($block->{'height'} % 10 == 0) {									# process payouts every 10 blocks
+
+							# DEBUG : We can't mine the next block as we're sending coins to a shielded wallet on the same node.
+							# DEBUG : Its rare for a node to mine two blocks in a row from the same node.
+							# DEBUG : Larger installations can get around this with multiple wallets 
+							
+							my $balance = payout::shield_coinbase($node_config->{'mineraddress'}, $config->{'pool_shielded'});
+							print "Pool balance : $balance\n";
+
+						}
+						stratum::new_block();									# spool miner shares, generate new work
 					}
 				}
 				stratum::update();											# process miner requests

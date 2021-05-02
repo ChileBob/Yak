@@ -1,0 +1,82 @@
+#!/usr/bin/perl
+#
+
+# just enough yak-yec to test things with
+
+
+my $config = {																# DEFAULT CONFIGURATION
+
+	nodename    => 'ChileBob (YCASH)',												# name/message for announcements
+	client_type => 'yak-yec',													# client type
+	client_key  => 'changethiskey',													# client encryption key, to send notifications
+	web => 'ws://127.0.0.1:8834',													# websocket server
+	pool_port => 3333,														# mining pool port number
+	pool_fee => 0.5,														# pool fee (percentage)
+#	pool_yaddr => "ys1y4ewqg6yuk67exdxy94032wwkyerwu0j3qp833xmmedusxluru8cly0ajvm9063k95y77j75yce",					# pool yaddr (mainnet)
+	pool_yaddr => 'ytestsapling15tpht93x0uy7sp2at2zdcnw4pwk7rquyg0jgzkdavhlkz20vfty5lpa5fklt5hqhl4g3ql0d9f4',			# pool yaddr (testnet)
+	timer => 60,															# interval timer
+	debug => 5,															# debugging output level
+#	librust => 'ycash/target/debug/librustycash.so',										# path to librustzcash.so (dynamic library built from librustzcash)
+#	viewkeyfee => 1000,														# viewkey monitoring fee (Yatoshis per block)
+};
+
+#########################################################################################################################################################################
+#
+# CHANGING ANYTHING BELOW THIS LINE IS A REALLY BAD IDEA !! 
+#
+#########################################################################################################################################################################
+
+our $node_client = 'ycash-cli';														# fullnode command line client
+
+$SIG{INT} = \&shutdown;															# graceful shutdown
+
+use Data::Dumper;															# debugging
+
+use ZMQ::FFI qw(ZMQ_SUB);														# ZMQ connection to fullnode
+use Time::HiRes q(usleep);														# ZMQ polling interval timer
+use IO::Socket::INET;															# general purpose networking
+use Protocol::WebSocket::Client;													# websocket client
+
+use Cwd qw(abs_path);														
+use File::Basename;
+
+our $install = dirname(abs_path($0));													# get install/working directory at runtime
+
+require "$install/modules/common.pm";													# common subs
+require "$install/modules/bech32.pm";													# bech32 encode/decode 
+require "$install/modules/aes256.pm";													# AES256 encrypt/decrypt
+require "$install/modules/packet.pm";													# yak packet generation/parsing
+require "$install/modules/blake2b.pm";													# needed by mining.pm
+require "$install/modules/mining.pm";													# mining
+require "$install/modules/stratum.pm";													# stratum server
+require "$install/modules/librust.pm";													# FFI subs to use rust libraries
+require "$install/modules/payout.pm";													# pool payout 
+
+print "\n\n" . common::yaksay("Welcome to Yak-TEST !!") . "\n\n";									# say hi
+
+$config = common::parse_argv($config, \@ARGV);												# modify config from command line args
+
+my $node_config = common::config_load("$ENV{'HOME'}/.ycash/ycash.conf");								# load node config
+
+if ($node_config->{'testnet'} && $config->{'librust'}) {										# disable payment detection for testnet
+	common::debug(0, "\nWARNING!!! PAYMENT DETECTION DISABLED (TESTNET) !!!");
+	delete($config->{'librust'});
+}
+
+my $info  = common::node_cli('getblockchaininfo', '', '');										# attempt node RPC connection
+
+while ( ($info->{'blocks'} != $info->{'headers'} ) || !exists($info->{'blocks'}) ) {							# delay until node is synced
+
+	common::debug(0, "\nWaiting for node sync...");
+	sleep(30);
+	$info  = common::node_cli('getblockchaininfo', '', '');										# reload chain info
+}
+
+our $block = common::node_cli('getblock', $info->{'bestblockhash'}, 'abort');								# load last block, abort if node is down
+
+#print Dumper payout::shield_coinbase( $node_config->{'mineraddress'}, $pool_yaddr );							# shield freshly mined coins
+#
+payout::load_shares($node_config->{'mineraddress'}, $config->{'pool_fee'});								# load payout shares
+
+exit;
+

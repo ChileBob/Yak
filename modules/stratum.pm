@@ -64,7 +64,7 @@ my $pool_spool;															# spool dir for mining shares
 
 my $pool_shares     = 0;													# shares per minute (approx)
 
-my $template;
+my $template = common::node_cli('getblocktemplate', '', '');									# refresh the block template
 
 my $miner;															# miner (config/state)
 my $miner_conn;															# miner (connection hash)
@@ -113,9 +113,10 @@ sub start {
 		$pool_select = IO::Select->new($pool_listen);									# port select handler
 
 		clear_shares();
-		@share_id = ();
-	
+
 		$running = 1;													# set runtime flag
+
+		new_block();													# generate work
 
 		make_path("$main::install/spool/unpaid/$pool_transparent/shares");						# create spool dir for share records
 		make_path("$main::install/spool/unpaid/$pool_transparent/blocks");						# create spool dir for share records
@@ -136,9 +137,12 @@ sub new_block {
 	DumpFile("$main::install/spool/unpaid/$pool_transparent/shares/$template->{'height'}", $miner_share);				# write miner shares to spool dir
 
 	clear_shares();
-	@share_id = ();
+
+	$template = common::node_cli('getblocktemplate', '', '');									# refresh the block template
 
 	new_work();															# new work for all miners
+
+	update();															# push new work to miners
 }
 
 #######################################################################################################################################
@@ -147,24 +151,24 @@ sub new_block {
 #
 sub new_work {
 
-	my ($idx) = @_;		# miner id, specify if we're making work for ONE miner
+	my ($id) = @_;															# miner id, specify if we're making work for ONE miner
 
-	my @miner_id;
-	if ($idx) {
-		@miner_id = ( $idx ) ;
-	}
-	else {
-		@miner_id = keys %$miner;
-	}
+	if ($running) {
 
-	if ($running) {															# only if pool is ready to mine
+		if (!$id) {														# if an id was specified, make work for just that miner (ie: new one!)
 
-		$template = common::node_cli('getblocktemplate', '', '');								# refresh the block template
+			my @miner_id = keys %$miner;
 
-		foreach my $id (@miner_id) {
-
+			foreach my $id (keys %$miner) {											# tag all active/targetted miners so they get new work
+				if ($miner->{$id}->{'state'} > $MINER_TARGETTED) {
+					$miner->{$id}->{'state'} = $MINER_TARGETTED;
+				}
+			}
+		}
+		else {															# otherwise, make work for ALL miners
+	
 			if ($miner->{$id}->{'state'} >= $MINER_AUTHORIZED) {								# only for miners that are ready to work
-
+	
 				$miner->{$id}->{'work'}->{'tx_data'} = mining::make_coinbase($template, [ 				# generate coinbase transaction
 					{ address => $devfee_address, percent => $devfee_percent},					# - devfee mined in coinbase
 					{ address => $pool_transparent }								# - balance to pool transparent address
@@ -178,9 +182,9 @@ sub new_work {
 					$miner->{$id}->{'work'}->{'tx_data'} .= $tx->{'data'};
 					$txn_count++;
 				}
-
+	
 				$miner->{$id}->{'work'}->{'tx_data'} = mining::hexCompactSize($txn_count) . $miner->{$id}->{'work'}->{'tx_data'};	# prefix transaction data with txn count
-
+	
 				$miner->{$id}->{'work'}->{'target'} = $pool_target;								# fixed pool target
 	
 				$miner->{$id}->{'work'}->{'version'}    	  = unpack("H*", pack("L", $template->{'version'}));		# version    (little-endian)
@@ -194,7 +198,7 @@ sub new_work {
 				$miner->{$id}->{'work'}->{'shares'} = 0;									# clear share counter
 				$miner->{$id}->{'timer_nonce'} = time;										# timestamp for the nonce
 	
-				if ( $miner->{$id}->{'state'} > $MINER_TARGETTED ) { 						# tag miner as idle
+				if ( $miner->{$id}->{'state'} > $MINER_TARGETTED ) { 							# tag miner as targetted
 					$miner->{$id}->{'state'} = $MINER_TARGETTED;	
 				}
 			}
@@ -210,38 +214,38 @@ sub update {
 
 	if ($running) {
 
-		my @miner_ready = $pool_select->can_read(0); 								#TODO: MINING : Parse request from mining clients
+		my @miner_ready = $pool_select->can_read(0); 									#TODO: MINING : Parse request from mining clients
 
 		if (@miner_ready) {												# loop through all connections with requests
 	
 			foreach my $fh (@miner_ready) {
 	
-				if ($fh == $pool_listen) {								# listening socket, new connection
+				if ($fh == $pool_listen) {									# listening socket, new connection
 	
-					my $new = $pool_listen->accept;							# accept connection
-					$pool_select->add($new);								# add to active
+					my $new = $pool_listen->accept;									# accept connection
+					$pool_select->add($new);									# add to active
 	
-					$miner_conn->{$new->fileno} = $miner_idx;						# add miners id number to hash of connections
+					$miner_conn->{$new->fileno} = $miner_idx;							# add miners id number to hash of connections
 	
-					$miner->{$miner_idx}->{'state'} = $MINER_NEW;						# tag as new connection
-					$miner->{$miner_idx}->{'type'}  = $MINER_TCP;						# connection type
+					$miner->{$miner_idx}->{'state'} = $MINER_NEW;							# tag as new connection
+					$miner->{$miner_idx}->{'type'}  = $MINER_TCP;							# connection type
 
 					$miner->{$miner_idx}->{'fh'} = $new->fileno;
 
-					$miner->{$miner_idx}->{'ipaddr'} = $new->peerhost;					# client IP address
-					$miner->{$miner_idx}->{'connected'} = time;						# timestamps
+					$miner->{$miner_idx}->{'ipaddr'} = $new->peerhost;						# client IP address
+					$miner->{$miner_idx}->{'connected'} = time;							# timestamps
 					$miner->{$miner_idx}->{'updated'} = time;
-					$miner->{$miner_idx}->{'block'} = 0;							# block number 
-					$miner->{$miner_idx}->{'worknumber'} = 1;						# job number
-					$miner->{$miner_idx}->{'extranonce'} = 0;						# extranonce support
+					$miner->{$miner_idx}->{'block'} = 0;								# block number 
+					$miner->{$miner_idx}->{'worknumber'} = 1;							# job number
+					$miner->{$miner_idx}->{'extranonce'} = 0;							# extranonce support
 	
 					$miner_idx++;
 				}
 				else {
 	
-					my $id = $miner_conn->{$fh->fileno};							# get index number from connection hash
+					my $id = $miner_conn->{$fh->fileno};								# get index number from connection hash
 	
-					my $buf = <$fh>;									# read socket
+					my $buf = <$fh>;										# read socket
 					
 					if ($buf) {
 
@@ -394,7 +398,7 @@ sub update {
 				
 				if ($miner->{$id}->{'state'} == $MINER_TARGETTED) {						# has target, send new work
 
-					new_work($id);
+					new_work($id);										# DEBUG ! Didn't we just do this ????
 
 					miner_write($fh, "\{\"id\":null,\"method\":\"mining.notify\",\"params\":\[\"$miner->{$id}->{'work'}->{'jobnumber'}\",\"$miner->{$id}->{'work'}->{'version'}\",\"$miner->{$id}->{'work'}->{'previousblockhash'}\",\"$miner->{$id}->{'work'}->{'merkleroot'}\",\"$miner->{$id}->{'work'}->{'finalsaplingroothash'}\",\"$miner->{$id}->{'work'}->{'time'}\",\"$miner->{$id}->{'work'}->{'bits'}\",true,\"ZcashPoW\"\]\}\n", $MINER_ACTIVE);
 					$miner->{$id}->{'updated'} = time;							# reset timestamp
@@ -410,8 +414,6 @@ sub update {
 				elsif ($miner->{$id}->{'state'} == $MINER_AUTHORIZED) {						# set target
 
 					miner_write($fh, "\{\"id\":null,\"method\":\"mining.set_target\",\"params\":\[\"$pool_target\"\]\}\n", $MINER_TARGETTED);
-
-					new_work($id);
 
 					$miner->{$id}->{'updated'} = time;							# reset timestamp
 				}		
