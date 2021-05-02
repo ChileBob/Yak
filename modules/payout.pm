@@ -20,7 +20,6 @@ my $debug = 0;															# debug verbosity for this package
 use Data::Dumper;														# debugging
 
 use File::Path qw(make_path);													# create spool directories
-
 use YAML qw(LoadFile);														# write miner shares to spool directory
 
 
@@ -75,60 +74,62 @@ sub load_shares {
 
 	my ($pool_transparent, $pool_fee) = @_;											# transparent mining address, percentage pool fee
 
-	my @blk_reward = ();													# reward blocks 
+	my @blk_mature = ();													# matured blocks (100+ blocks old)
+	my @blk_mined  = ();													# mined blocks
 
-	my $total_reward = 0;
+	my $pool_reward = 0;													# amount earnt by pool miners
 
-	print "Current Block : $main::block->{'height'}\n";									# current block height
-	
-	opendir my $dir, "$main::install/spool/unpaid/$pool_transparent/blocks/";						# get lowest mined block
-	my @blk_mined = grep ! /^\./, sort {$a <=> $b} readdir ($dir);
+	opendir my $dir, "$main::install/spool/unpaid/$pool_transparent/blocks/";						# load all mined blocks
+	@blk_mined = grep ! /^\./, sort {$a <=> $b} readdir ($dir);
 	close ($dir);
 
-	foreach my $blk (@blk_mined) {												# get blocks that have matured
+	foreach my $blk (@blk_mined) {												# filter to mature blocks
 		if ( ($main::block->{'height'} - 100) > $blk) {
-			push @blk_reward, $blk;
+			push @blk_mature, $blk;
 		}
 	}
 
-	my $blk_info = common::node_cli('getblock', $blk_reward[0], '');							# oldest block first
-
+	my $blk_info = common::node_cli('getblock', $blk_mature[0], '');							# get block detail from node
 	my $coinbase = common::node_cli('gettransaction', $blk_info->{'tx'}[0], '');						# get coinbase transaction
 
-	foreach my $vout (@{$coinbase->{'details'}}) {
-		if (($vout->{'category'} eq 'generate') && ($vout->{'address'} eq $pool_transparent)) {				# get output for pool transparent address
-			$total_reward += $vout->{'amount'};									# add to payout total
+	foreach my $vout (@{$coinbase->{'details'}}) {										# loop through outputs
+		if (($vout->{'category'} eq 'generate') && ($vout->{'address'} eq $pool_transparent)) {				# confirm its out mining address
+			$pool_reward = $vout->{'amount'};									# store our reward
 		}
 	}
 
-	print "Block    : $blk_reward[0]\n";
-	print "Reward   : $total_reward\n";
-	print "Pool Fee : " . sprintf("%.8f", $total_reward * ($pool_fee / 100)) . "\n";
+	my $pool_charge = sprintf("%.8f", $pool_reward * ($pool_fee / 100));							# deduct pool fee from payout 
+	my $pool_payout = $pool_reward - $pool_charge;										# NOTE: pool fee remains in the pool shielded address
 
-	opendir my $dir, "$main::install/spool/unpaid/$pool_transparent/shares/";						# load shares
+	my $shares = {};													# calculate miner shares for this block
+	my $shares_total = 0;
+
+	opendir my $dir, "$main::install/spool/unpaid/$pool_transparent/shares/";						# load logs
 	my @share_block = grep ! /^\./, sort {$a <=> $b} readdir ($dir);
 	close ($dir);
 
-	my $shares = {};
-	my $shares_total = 0;
+	foreach my $share_file (@share_block) {											# loop through logfiles
 
-	foreach my $share_file (@share_block) {
+		if ($share_file <= $blk_mature[0]) {										# filter share logs, up to mined block
 
-		if ($share_file <= $blk_reward[0]) {
-
-			my $share = LoadFile("$main::install/spool/unpaid/$pool_transparent/shares/$share_file");
+			my $share = LoadFile("$main::install/spool/unpaid/$pool_transparent/shares/$share_file");		# load share logfile
 			
-			foreach my $miner (keys %$share) {
-				$shares_total += $share->{$miner};
-				$shares->{$miner} += $share->{$miner};
+			foreach my $miner (keys %$share) {									# generate hash of shares for each miner
+				if ($share->{$miner} > 0) {									# ignore zero logs
+					$shares_total += $share->{$miner};
+					$shares->{$miner} += $share->{$miner};
+				}
 			}
 		}
 	}
 
-	print "Total Shares : $shares_total\n";
+	my $zats_per_share  = $pool_payout / $shares_total;									# calculate miner payout per share
 
-	print Dumper $shares;
+	foreach my $miner (keys %$shares) {											# change miner share count to zats earnt
+		$shares->{$miner} = sprintf("%.8f", ($shares->{$miner} * $zats_per_share ));
+	}				
 
+	return($shares);													# returns hash of addresses & amount to pay
 }
 
 1;	# all packages are true

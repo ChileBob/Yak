@@ -405,7 +405,7 @@ sub yaksay {
 		'        \\   ^__^',					# there's a reason it looks like a cow
 		'         \\  (oo)\\_______',
 		'            (__)\\       )\\/\\',
-		'                ||----w |',				# ever heard of 'cowsay' ?  ;-)
+		'                ||----\ |',				# ever heard of 'cowsay' ?  ;-)
 		'                ||     ||'
 	);
 

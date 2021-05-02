@@ -76,7 +76,7 @@ our $block = common::node_cli('getblock', $info->{'bestblockhash'}, 'abort');			
 
 #print Dumper payout::shield_coinbase( $node_config->{'mineraddress'}, $pool_yaddr );							# shield freshly mined coins
 #
-payout::load_shares($node_config->{'mineraddress'}, $config->{'pool_fee'});								# load payout shares
+print Dumper payout::load_shares($node_config->{'mineraddress'}, $config->{'pool_fee'});								# load payout shares
 
 exit;
 
