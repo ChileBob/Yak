@@ -20,6 +20,7 @@ my $debug = 0;															# debug verbosity for this package
 use Data::Dumper;														# debugging
 
 use File::Path qw(make_path);													# create spool directories
+use File::Copy;															# move & copy files
 use YAML qw(LoadFile);														# write miner shares to spool directory
 
 
@@ -65,6 +66,34 @@ sub shield_coinbase {
 	return($amount);
 }
 
+
+#########################################################################################################################################################################
+#
+# move spooled share & block files
+#
+sub move_spool {
+
+	my ($pool_transparent, $block_number, $status_from, $status_to ) = @_;						# move spooled files (pool address, max block number, from_directory, to_directory)
+
+	my @filenames = ();
+
+	foreach my $type ('blocks', 'shares') {										# cycle through file types
+
+		opendir my $dir, "$main::install/spool/$status_from/$pool_transparent/$type/";					# list of files to move
+		foreach my $file (grep ! /^\./, readdir ($dir)) {
+			if ($file <= $block_number) {										# filename equal or less to block number
+				push @filenames, $file;
+			}
+		}
+		close ($dir);
+	
+		make_path("$main::install/spool/$status_to/$pool_transparent/$type/");						# create target dir if necessary
+
+		foreach my $file (@filenames) {											# move the files	
+			move ("$main::install/spool/$status_from/$pool_transparent/$type/$file", "$main::install/spool/$status_to/$pool_transparent/$type/$file");
+		}
+	}
+}
 
 #########################################################################################################################################################################
 #
@@ -129,7 +158,7 @@ sub load_shares {
 		$shares->{$miner} = sprintf("%.8f", ($shares->{$miner} * $zats_per_share ));
 	}				
 
-	return($shares);													# returns hash of addresses & amount to pay
+	return($shares, $blk_mature[0]);											# returns hash of addresses & amount to pay
 }
 
 1;	# all packages are true

@@ -75,8 +75,13 @@ while ( ($info->{'blocks'} != $info->{'headers'} ) || !exists($info->{'blocks'})
 our $block = common::node_cli('getblock', $info->{'bestblockhash'}, 'abort');								# load last block, abort if node is down
 
 #print Dumper payout::shield_coinbase( $node_config->{'mineraddress'}, $pool_yaddr );							# shield freshly mined coins
-#
-print Dumper payout::load_shares($node_config->{'mineraddress'}, $config->{'pool_fee'});								# load payout shares
+
+my ($shares, $payout_block) = payout::load_shares($node_config->{'mineraddress'}, $config->{'pool_fee'});				# payment shares & block number
+
+print "payout block : $payout_block\n";
+
+payout::move_spool($node_config->{'mineraddress'}, $payout_block, 'unpaid', 'paid');							# move spooled blocks & share logs
+
 
 exit;
 
