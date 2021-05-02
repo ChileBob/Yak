@@ -76,11 +76,16 @@ our $block = common::node_cli('getblock', $info->{'bestblockhash'}, 'abort');			
 
 #print Dumper payout::shield_coinbase( $node_config->{'mineraddress'}, $pool_yaddr );							# shield freshly mined coins
 
+my $balance = common::node_cli('z_getbalance', "$config->{'pool_yaddr'} 6", 'string');							# get available balance
+
+print "Confirmed Shielded Balance : $balance\n";
+exit;
+
 my ($shares, $payout_block) = payout::load_shares($node_config->{'mineraddress'}, $config->{'pool_fee'});				# payment shares & block number
 
 print "payout block : $payout_block\n";
 
-payout::move_spool($node_config->{'mineraddress'}, $payout_block, 'unpaid', 'paid');							# move spooled blocks & share logs
+# payout::move_spool($node_config->{'mineraddress'}, $payout_block, 'unpaid', 'paid');							# move spooled blocks & share logs
 
 
 exit;
